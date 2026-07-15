@@ -206,6 +206,17 @@ function renderScreen(
 
 beforeEach(() => {
   window.sessionStorage.clear()
+  // This suite documents the grouped LIST view; the board (the default
+  // view) has its own coverage in task-board.test.tsx. The test DOM has no
+  // localStorage, so stub the minimal surface the view toggle reads.
+  Object.defineProperty(window, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: () => 'list',
+      setItem: () => {},
+      removeItem: () => {},
+    },
+  })
   getOpenTasks.mockReset()
   getCompletedTasks.mockReset()
   getCompletedTasks.mockResolvedValue([])

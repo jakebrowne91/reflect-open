@@ -8,7 +8,7 @@ import {
   type ReactElement,
 } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Archive, CalendarClock, List, Search } from 'lucide-react'
+import { Archive, CalendarClock, LayoutGrid, List, Rows3, Search } from 'lucide-react'
 import {
   getCompletedTasks,
   getOpenTasks,
@@ -18,6 +18,7 @@ import {
 } from '@reflect/core'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { cn } from '@/lib/utils'
 import { useNoteLinkNavigation } from '@/hooks/use-note-link-navigation'
 import { useRecentlyCompleted } from '@/lib/tasks/recently-completed'
 import { sameTask, taskKey } from '@/lib/tasks/task-identity'
@@ -35,10 +36,23 @@ import { useToday } from '@/lib/use-today'
 import type { NewWindowClickEvent } from '@/lib/windows/open-in-new-window'
 import { useGraph } from '@/providers/graph-provider'
 import { routeForPath } from '@/routing/route'
+import { TaskBoard } from './task-board'
 import { TaskFiltersMenu } from './task-filters-menu'
 import { TaskGroupSection } from './task-group-section'
 import { TaskScheduleCalendar } from './task-schedule-calendar'
 import { TaskToolbarCountBadge } from './task-toolbar-count-badge'
+
+type TasksView = 'board' | 'list'
+
+const TASKS_VIEW_STORAGE_KEY = 'reflect.tasksView'
+
+function storedTasksView(): TasksView {
+  try {
+    return window.localStorage.getItem(TASKS_VIEW_STORAGE_KEY) === 'list' ? 'list' : 'board'
+  } catch {
+    return 'board'
+  }
+}
 
 /** The selected task that owns keyboard focus: the cursor/anchor, else the first row left selected. */
 function focusedSelectedKey(
@@ -80,6 +94,16 @@ export function TasksScreen(): ReactElement {
   const [query, setQuery] = useState('')
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [scheduleOpen, setScheduleOpen] = useState(false)
+  // Board (the default) or the original grouped list; sticky per device.
+  const [view, setView] = useState<TasksView>(storedTasksView)
+  const switchView = useCallback((next: TasksView) => {
+    setView(next)
+    try {
+      window.localStorage.setItem(TASKS_VIEW_STORAGE_KEY, next)
+    } catch {
+      // Storage can be unavailable (private windows); the toggle still works.
+    }
+  }, [])
   const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const enabled = hasBridge() && graph !== null
@@ -92,7 +116,9 @@ export function TasksScreen(): ReactElement {
   const { data: completed, isError: completedFailed } = useQuery({
     queryKey: completedTasksQueryKey(graph?.root),
     queryFn: () => getCompletedTasks(),
-    enabled: enabled && filters.archived,
+    // The board's Done column always needs the completed read; the list only
+    // pays for it when the archived filter is on.
+    enabled: enabled && (filters.archived || view === 'board'),
   })
 
   // Either read failing surfaces the alert — a failed completed read must not
@@ -162,6 +188,21 @@ export function TasksScreen(): ReactElement {
     },
     [actions, selection, scrollToKey],
   )
+  // The Done column: this session's struck rows first, then stored history,
+  // deduped (a just-completed task appears in both until the reindex).
+  const boardDone = useMemo(() => {
+    const seen = new Set<string>()
+    const rows: OpenTask[] = []
+    for (const task of [...recentlyCompleted, ...(completed ?? [])]) {
+      const key = taskKey(task)
+      if (!seen.has(key)) {
+        seen.add(key)
+        rows.push(task)
+      }
+    }
+    return rows
+  }, [recentlyCompleted, completed])
+
   // The tasks behind the current selection's keys, in selection order — what the
   // toolbar actions (schedule, convert) act on. A row whose key no longer
   // resolves (pruned by a reindex) is dropped rather than acted on.
@@ -305,6 +346,34 @@ export function TasksScreen(): ReactElement {
             <TaskToolbarCountBadge count={recentlyCompleted.length} />
           </Button>
         ) : null}
+        <div
+          role="group"
+          aria-label="Tasks view"
+          className="window-drag-control flex flex-none items-center gap-0.5 rounded-md bg-[color:var(--surface-hover)] p-0.5"
+        >
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label="Board view"
+            aria-pressed={view === 'board'}
+            onClick={() => switchView('board')}
+            className={cn('size-7', view === 'board' && 'bg-[color:var(--surface)] shadow-sm')}
+          >
+            <LayoutGrid aria-hidden className="size-3.5" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label="List view"
+            aria-pressed={view === 'list'}
+            onClick={() => switchView('list')}
+            className={cn('size-7', view === 'list' && 'bg-[color:var(--surface)] shadow-sm')}
+          >
+            <Rows3 aria-hidden className="size-3.5" />
+          </Button>
+        </div>
         <TaskFiltersMenu
           filters={filters}
           toggle={toggle}
@@ -312,38 +381,57 @@ export function TasksScreen(): ReactElement {
           onOpenChange={setFiltersOpen}
         />
       </header>
-      <div
-        ref={setScrollElement}
-        onScroll={onScroll}
-        className="min-h-0 flex-1 overflow-auto pb-8"
-      >
-        {isError ? (
-          <p role="alert" className="px-4 py-6 text-sm text-text-muted lg:px-12">
-            Couldn’t load tasks.
-          </p>
-        ) : ready && groups.length === 0 ? (
-          <p className="px-4 py-6 text-sm text-text-muted lg:px-12">
-            {needle ? 'No matching tasks.' : 'No tasks to show.'}
-          </p>
-        ) : (
-          <div className="flex flex-col gap-5">
-            {groups.map((group: TaskGroup) => (
-              <TaskGroupSection
-                key={group.kind === 'note' ? `note:${group.notePath}` : group.kind}
-                group={group}
-                selection={selection}
-                editHandlers={editHandlers}
-                taskActionPending={actions.isPending}
-                onSelectionCheckboxToggle={onSelectionCheckboxToggle}
-                today={today}
-                onAdd={onAdd}
-                convertControllerRef={convertControllerRef}
-                onOpen={openNote}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+      {view === 'board' ? (
+        <div className="min-h-0 flex-1 pb-4">
+          {isError ? (
+            <p role="alert" className="px-4 py-6 text-sm text-text-muted lg:px-12">
+              Couldn’t load tasks.
+            </p>
+          ) : (
+            <TaskBoard
+              open={open ?? []}
+              done={boardDone}
+              needle={needle}
+              today={today}
+              actions={actions}
+              onOpen={openNote}
+            />
+          )}
+        </div>
+      ) : (
+        <div
+          ref={setScrollElement}
+          onScroll={onScroll}
+          className="min-h-0 flex-1 overflow-auto pb-8"
+        >
+          {isError ? (
+            <p role="alert" className="px-4 py-6 text-sm text-text-muted lg:px-12">
+              Couldn’t load tasks.
+            </p>
+          ) : ready && groups.length === 0 ? (
+            <p className="px-4 py-6 text-sm text-text-muted lg:px-12">
+              {needle ? 'No matching tasks.' : 'No tasks to show.'}
+            </p>
+          ) : (
+            <div className="flex flex-col gap-5">
+              {groups.map((group: TaskGroup) => (
+                <TaskGroupSection
+                  key={group.kind === 'note' ? `note:${group.notePath}` : group.kind}
+                  group={group}
+                  selection={selection}
+                  editHandlers={editHandlers}
+                  taskActionPending={actions.isPending}
+                  onSelectionCheckboxToggle={onSelectionCheckboxToggle}
+                  today={today}
+                  onAdd={onAdd}
+                  convertControllerRef={convertControllerRef}
+                  onOpen={openNote}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
