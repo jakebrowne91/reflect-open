@@ -1,15 +1,21 @@
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
+import type { HttpBindings } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
+import { RESPONSE_ALREADY_SENT } from '@hono/node-server/utils/response'
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { toAppError, type AppError } from '@reflect/core'
 import { Hono, type Context } from 'hono'
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import { z } from 'zod'
+import { createAgentRoutes } from './agent-routes'
+import { buildMcpServer } from './mcp'
 import { renderLoginPage } from './login-page'
 import type { SessionAuth } from './auth'
 import type { BridgeRouter } from './bridge-router'
 import type { ServerConfig } from './config'
+import type { GraphService } from './graph-service'
 
 const SESSION_COOKIE = 'reflect_session'
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1_000
@@ -32,14 +38,25 @@ function errorStatus(error: AppError): ContentfulStatusCode {
   }
 }
 
-/** Assemble the HTTP app: login, the bridge RPC, and (when built) the web UI. */
+/** Assemble the HTTP app: login, the bridge RPC, agent surfaces, the web UI. */
 export function createApp(
   config: ServerConfig,
   auth: SessionAuth,
   router: BridgeRouter,
+  graph: GraphService,
   webDistDir: string | null,
-): Hono {
-  const app = new Hono()
+): Hono<{ Bindings: HttpBindings }> {
+  const app = new Hono<{ Bindings: HttpBindings }>()
+
+  /** Bearer token (agents) or session cookie (the browser) — one gate. */
+  const isAuthenticated = (c: Context): boolean => {
+    const bearer = c.req.header('authorization')?.replace(/^Bearer /, '') ?? ''
+    if (auth.checkAgentToken(bearer)) {
+      return true
+    }
+    const session = getCookie(c, SESSION_COOKIE)
+    return session !== undefined && auth.verifySession(session)
+  }
 
   const setSessionCookie = (c: Context): void => {
     setCookie(c, SESSION_COOKIE, auth.issueSession(SESSION_TTL_MS), {
@@ -102,18 +119,12 @@ export function createApp(
     return c.json({ ok: true })
   })
 
-  // Bearer token (agents) or session cookie (the browser app) — everything
-  // under /api except login/health requires one of the two.
+  // Everything under /api except login/health requires auth.
   app.use('/api/*', async (c, next) => {
     if (c.req.path === '/api/login' || c.req.path === '/api/health') {
       return next()
     }
-    const bearer = c.req.header('authorization')?.replace(/^Bearer /, '') ?? ''
-    if (auth.checkAgentToken(bearer)) {
-      return next()
-    }
-    const session = getCookie(c, SESSION_COOKIE)
-    if (session !== undefined && auth.verifySession(session)) {
+    if (isAuthenticated(c)) {
       return next()
     }
     return c.json({ error: { kind: 'auth', message: 'login required' } }, 401)
@@ -135,6 +146,25 @@ export function createApp(
       const error = toAppError(cause)
       return c.json({ error }, errorStatus(error))
     }
+  })
+
+  // Agent surfaces: boring JSON under /api/agent (inside the auth scope
+  // above), and MCP Streamable HTTP at /mcp with the same credentials.
+  app.route('/api/agent', createAgentRoutes(graph))
+
+  app.all('/mcp', async (c) => {
+    if (!isAuthenticated(c)) {
+      return c.json({ error: { kind: 'auth', message: 'login required' } }, 401)
+    }
+    // Stateless per-request transport: no session ids, no SSE resumption —
+    // every POST is a complete JSON-RPC exchange against the shared graph.
+    const server = buildMcpServer(graph)
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
+    await server.connect(transport)
+    const body = c.req.method === 'POST' ? await c.req.json() : undefined
+    await transport.handleRequest(c.env.incoming, c.env.outgoing, body)
+    // The transport wrote to the raw Node response already.
+    return RESPONSE_ALREADY_SENT
   })
 
   // The built web app, when present (production images bundle it). Vite dev

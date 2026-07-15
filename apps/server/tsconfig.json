@@ -1,4 +1,10 @@
 {
   "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // The MCP SDK's types are not exactOptionalPropertyTypes-clean
+    // (explicit-undefined options, Transport callbacks); relax only that
+    // flag, only here.
+    "exactOptionalPropertyTypes": false
+  },
   "include": ["src"]
 }

@@ -7,6 +7,7 @@ import { createSessionAuth } from './auth'
 import { createBridgeRouter } from './bridge-router'
 import { loadConfig } from './config'
 import { createFsFileStore } from './fs-file-store'
+import { createGraphService } from './graph-service'
 import { createServerIndexDb } from './index-db'
 
 const config = loadConfig(process.env)
@@ -23,13 +24,14 @@ if (!existsSync(migrationsDir)) {
 const files = createFsFileStore(config.graphDir)
 const index = createServerIndexDb(path.join(config.dataDir, 'index.db'), migrationsDir)
 const router = createBridgeRouter(config, files, index)
+const graph = createGraphService(files, index)
 const auth = createSessionAuth(config.password, config.agentToken)
 
 const webDistDirRaw =
   process.env['REFLECT_WEB_DIST'] ?? fileURLToPath(new URL('../../desktop/dist', import.meta.url))
 const webDistDir = existsSync(path.join(webDistDirRaw, 'index.html')) ? webDistDirRaw : null
 
-const app = createApp(config, auth, router, webDistDir)
+const app = createApp(config, auth, router, graph, webDistDir)
 
 serve({ fetch: app.fetch, port: config.port }, (info) => {
   console.info(`[reflect-server] graph:  ${config.graphDir}`)
