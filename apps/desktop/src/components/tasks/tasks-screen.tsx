@@ -36,6 +36,7 @@ import { useToday } from '@/lib/use-today'
 import type { NewWindowClickEvent } from '@/lib/windows/open-in-new-window'
 import { useGraph } from '@/providers/graph-provider'
 import { routeForPath } from '@/routing/route'
+import { GsdBoard, gsdBoardUrl } from './gsd-board'
 import { TaskBoard } from './task-board'
 import { TaskFiltersMenu } from './task-filters-menu'
 import { TaskGroupSection } from './task-group-section'
@@ -96,6 +97,7 @@ export function TasksScreen(): ReactElement {
   const [scheduleOpen, setScheduleOpen] = useState(false)
   // Board (the default) or the original grouped list; sticky per device.
   const [view, setView] = useState<TasksView>(storedTasksView)
+  const gsdUrl = gsdBoardUrl()
   const switchView = useCallback((next: TasksView) => {
     setView(next)
     try {
@@ -116,9 +118,9 @@ export function TasksScreen(): ReactElement {
   const { data: completed, isError: completedFailed } = useQuery({
     queryKey: completedTasksQueryKey(graph?.root),
     queryFn: () => getCompletedTasks(),
-    // The board's Done column always needs the completed read; the list only
-    // pays for it when the archived filter is on.
-    enabled: enabled && (filters.archived || view === 'board'),
+    // The native board's Done column needs the completed read; the list only
+    // pays for it when archived is on, and the embedded GSD board not at all.
+    enabled: enabled && (filters.archived || (view === 'board' && gsdBoardUrl() === null)),
   })
 
   // Either read failing surfaces the alert — a failed completed read must not
@@ -383,11 +385,15 @@ export function TasksScreen(): ReactElement {
       </header>
       {view === 'board' ? (
         <div className="min-h-0 flex-1 pb-4">
-          {isError ? (
+          {gsdUrl !== null ? (
+            // The real GSD board, kept in step with the notes by the server.
+            <GsdBoard url={gsdUrl} />
+          ) : isError ? (
             <p role="alert" className="px-4 py-6 text-sm text-text-muted lg:px-12">
               Couldn’t load tasks.
             </p>
           ) : (
+            // No GSD configured (local dev): the native board stands in.
             <TaskBoard
               open={open ?? []}
               done={boardDone}

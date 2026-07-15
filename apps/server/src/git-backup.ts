@@ -85,8 +85,13 @@ export function createGitBackup(
   async function ensureRepo(): Promise<void> {
     if (!existsSync(path.join(graphDir, '.git'))) {
       await git('init', '-b', 'main')
-      // Commits need an identity; scope one to the repo rather than
-      // requiring global config on the server box.
+    }
+    // Commits need an author identity, scoped to the repo rather than relying
+    // on global config. This must run for a CLONED repo too (restore-on-boot),
+    // not only a freshly init'd one — a clone carries no local identity, so
+    // without this every commit fails silently ("tell me who you are") and the
+    // backup stages changes it can never commit.
+    if ((await gitOrNull('config', 'user.email')) === null) {
       await git('config', 'user.name', 'Reflect Server')
       await git('config', 'user.email', 'reflect-server@localhost')
     }
