@@ -39,3 +39,4 @@ dist-ssr
 # Claude Code session artifacts (shared hooks in settings.json stay tracked)
 .claude/*
 !.claude/settings.json
+.reflect-fly-credentials
