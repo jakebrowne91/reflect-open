@@ -47,9 +47,9 @@ export function warmPlatformRoot(): void {
   })
 }
 
-// Dev-only escape hatch: `?platform=ios` (or `android`) in a plain browser
-// forces the mobile tree, backed by the in-memory dev bridge, so mobile UI
-// work is visible without an iOS build. Statically false in production
+// Dev-only escape hatch: `?platform=ios`, `android`, or `desktop` in a plain
+// browser forces that surface tree, backed by the in-memory dev bridge, so UI
+// work is visible without a native build. Statically false in production
 // builds, so the check and the dev-bridge chunk are both dead code there.
 const devPlatformOverride: AppPlatform | null = import.meta.env.DEV
   ? readDevPlatformOverride()
@@ -57,7 +57,9 @@ const devPlatformOverride: AppPlatform | null = import.meta.env.DEV
 
 function readDevPlatformOverride(): AppPlatform | null {
   const requested = new URLSearchParams(window.location.search).get('platform')
-  return requested === 'ios' || requested === 'android' ? requested : null
+  return requested === 'ios' || requested === 'android' || requested === 'desktop'
+    ? requested
+    : null
 }
 
 /**

@@ -95,7 +95,11 @@ export function createDevBridge(backend: DevBridgeBackend): IpcBridge {
       case 'graph_create':
         return graphInfo
       case 'recent_graphs':
-        return []
+        // The desktop boot path reopens the most recent graph (mobile never
+        // reads recents), so the seeded graph must be listed here — an empty
+        // list would land on the chooser, whose folder picker has no native
+        // dialog to open in a browser.
+        return [{ root: DEV_GRAPH_ROOT, name: 'Dev Graph', openedMs: 0 }]
       case 'forget_recent':
       case 'capture_host_register':
       case 'watch_start':

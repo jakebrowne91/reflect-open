@@ -1,3 +1,4 @@
+import { isTauri } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { confirmQuit, hasBridge, subscribeQuitRequested } from '@reflect/core'
 import { flushOpenDocuments } from '@/editor/open-documents'
@@ -24,9 +25,10 @@ import { trackSubscriptions } from '@/lib/subscriptions'
  * sequence lives in `background-flush.ts` (Plan 19, decision 6).
  */
 export function installQuitFlush(): () => void {
-  // No bridge → no native shell (plain-browser dev): nothing can quit-flush.
-  // getCurrentWindow below is safe to reach only inside a Tauri webview.
-  if (!hasBridge()) {
+  // No native shell → nothing can quit-flush. A bridge alone is not enough:
+  // the browser dev harness installs one without a Tauri webview, and
+  // getCurrentWindow below is safe to reach only inside a real shell.
+  if (!hasBridge() || !isTauri()) {
     return () => {}
   }
 
