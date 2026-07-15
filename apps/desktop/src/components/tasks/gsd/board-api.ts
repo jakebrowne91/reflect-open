@@ -122,6 +122,41 @@ export function fetchCard(cardPublicId: string): Promise<BoardCard> {
   return boardFetch(`/cards/${cardPublicId}`, cardSchema)
 }
 
+export function useLabelMutations(): {
+  createLabel: (input: { boardPublicId: string; name: string; colourCode: string }) => void
+  toggleCardLabel: (cardPublicId: string, labelPublicId: string) => void
+} {
+  const queryClient = useQueryClient()
+  const onSettled = (): void => {
+    void queryClient.invalidateQueries({ queryKey: ['gsd', 'board'] })
+    void queryClient.invalidateQueries({ queryKey: ['gsd', 'card'] })
+  }
+  const create = useMutation({
+    mutationFn: (input: { boardPublicId: string; name: string; colourCode: string }) =>
+      boardFetch('/labels', z.unknown(), {
+        method: 'POST',
+        body: JSON.stringify({
+          name: input.name,
+          colourCode: input.colourCode,
+          boardPublicId: input.boardPublicId,
+        }),
+      }),
+    onSettled,
+  })
+  const toggle = useMutation({
+    mutationFn: (input: { cardPublicId: string; labelPublicId: string }) =>
+      boardFetch(`/cards/${input.cardPublicId}/labels/${input.labelPublicId}`, z.unknown(), {
+        method: 'PUT',
+      }),
+    onSettled,
+  })
+  return {
+    createLabel: (input) => create.mutate(input),
+    toggleCardLabel: (cardPublicId, labelPublicId) =>
+      toggle.mutate({ cardPublicId, labelPublicId }),
+  }
+}
+
 export function useCard(cardPublicId: string): { card: BoardCard | undefined; isPending: boolean } {
   const query = useQuery({
     queryKey: cardKey(cardPublicId),
