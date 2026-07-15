@@ -1,0 +1,34 @@
+/**
+ * GSD (Kan) color scales, ported verbatim from
+ * apps/gsd/tooling/tailwind/web.ts so the natively-ported GSD board renders
+ * with Kan's exact palette — its components keep their original
+ * `bg-dark-200`, `text-light-800`, `ring-dark-800` classes and resolve
+ * pixel-identically. Tailwind v4 registers these via the `--color-*` theme
+ * namespace, which generates the matching utilities.
+ */
+@theme {
+  --color-dark-50: oklch(0.34 0 0);
+  --color-dark-100: oklch(0.385 0 0);
+  --color-dark-200: oklch(0.415 0 0);
+  --color-dark-300: oklch(0.435 0 0);
+  --color-dark-400: oklch(0.47 0 0);
+  --color-dark-500: oklch(0.5 0 0);
+  --color-dark-600: oklch(0.56 0 0);
+  --color-dark-700: oklch(0.62 0 0);
+  --color-dark-800: oklch(0.69 0 0);
+  --color-dark-900: oklch(0.76 0 0);
+  --color-dark-950: oklch(0.82 0 0);
+  --color-dark-1000: oklch(0.85 0 0);
+  --color-light-50: oklch(0.965 0 0);
+  --color-light-100: oklch(0.945 0 0);
+  --color-light-200: oklch(0.925 0 0);
+  --color-light-300: oklch(0.91 0 0);
+  --color-light-400: oklch(0.895 0 0);
+  --color-light-500: oklch(0.87 0 0);
+  --color-light-600: oklch(0.835 0 0);
+  --color-light-700: oklch(0.8 0 0);
+  --color-light-800: oklch(0.68 0 0);
+  --color-light-900: oklch(0.55 0 0);
+  --color-light-950: oklch(0.41 0 0);
+  --color-light-1000: oklch(0.2 0 0);
+}

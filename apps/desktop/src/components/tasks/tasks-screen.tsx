@@ -36,7 +36,9 @@ import { useToday } from '@/lib/use-today'
 import type { NewWindowClickEvent } from '@/lib/windows/open-in-new-window'
 import { useGraph } from '@/providers/graph-provider'
 import { routeForPath } from '@/routing/route'
-import { GsdBoard, gsdBoardUrl } from './gsd-board'
+import { gsdBoardUrl } from './gsd-board'
+import { Board as GsdNativeBoard } from './gsd/Board'
+import { CardDetail } from './gsd/CardDetail'
 import { TaskBoard } from './task-board'
 import { TaskFiltersMenu } from './task-filters-menu'
 import { TaskGroupSection } from './task-group-section'
@@ -98,6 +100,7 @@ export function TasksScreen(): ReactElement {
   // Board (the default) or the original grouped list; sticky per device.
   const [view, setView] = useState<TasksView>(storedTasksView)
   const gsdUrl = gsdBoardUrl()
+  const [openCardId, setOpenCardId] = useState<string | null>(null)
   const switchView = useCallback((next: TasksView) => {
     setView(next)
     try {
@@ -386,8 +389,13 @@ export function TasksScreen(): ReactElement {
       {view === 'board' ? (
         <div className="min-h-0 flex-1 pb-4">
           {gsdUrl !== null ? (
-            // Your actual GSD (apps/gsd), embedded — the real app, all features.
-            <GsdBoard url={gsdUrl} />
+            // GSD's board, ported native into Reflect against live GSD data.
+            <>
+              <GsdNativeBoard onOpenCard={setOpenCardId} />
+              {openCardId !== null ? (
+                <CardDetail cardPublicId={openCardId} onClose={() => setOpenCardId(null)} />
+              ) : null}
+            </>
           ) : isError ? (
             <p role="alert" className="px-4 py-6 text-sm text-text-muted lg:px-12">
               Couldn’t load tasks.

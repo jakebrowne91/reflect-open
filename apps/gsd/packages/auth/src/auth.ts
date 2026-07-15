@@ -71,6 +71,20 @@ export const initAuth = (db: dbClient) => {
       database: {
         generateId: false,
       },
+      // When GSD is embedded in Reflect (a different origin), the session
+      // cookie is third-party. SameSite=None + Secure lets the browser send
+      // it inside the frame, and Partitioned (CHIPS) keeps it allowed even
+      // with third-party cookies blocked — the in-frame login stops bouncing.
+      // Gated on GSD_EMBED_COOKIES so a standalone deploy keeps Lax defaults.
+      ...(env("GSD_EMBED_COOKIES") === "true"
+        ? {
+            defaultCookieAttributes: {
+              sameSite: "none",
+              secure: true,
+              partitioned: true,
+            },
+          }
+        : {}),
     },
   });
 };
