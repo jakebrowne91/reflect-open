@@ -26,6 +26,13 @@ import type { ServerIndexDb } from './index-db'
  *    browser in the loop.
  */
 export interface GraphService {
+  /**
+   * Bring the index in step with the folder: apply every file whose mtime
+   * differs from its row, drop rows whose files vanished. Run at boot so
+   * agent surfaces work before any browser has visited, and after external
+   * changes (a git restore, an out-of-band edit).
+   */
+  reconcile: () => Promise<{ applied: number; removed: number }>
   listNotes: () => NoteSummary[]
   readNote: (path: string) => Promise<{ path: string; contents: string }>
   writeNote: (path: string, contents: string) => Promise<{ path: string; modifiedMs: number }>
@@ -132,6 +139,32 @@ export function createGraphService(
   }
 
   return {
+    reconcile: async () => {
+      const stored = new Map(
+        index
+          .query('SELECT path, mtime FROM notes', [])
+          .map((row) => [String(row['path']), Number(row['mtime'])]),
+      )
+      let applied = 0
+      for (const file of files.list()) {
+        const knownMtime = stored.get(file.path)
+        stored.delete(file.path)
+        if (knownMtime === file.modifiedMs) {
+          continue
+        }
+        const contents = files.read(file.path)
+        if (contents === null) {
+          continue
+        }
+        await indexContents(file.path, contents, file.modifiedMs)
+        applied += 1
+      }
+      for (const orphan of stored.keys()) {
+        index.removeNote(orphan)
+      }
+      return { applied, removed: stored.size }
+    },
+
     listNotes: () =>
       index
         .query(

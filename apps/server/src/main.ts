@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -10,6 +11,23 @@ import { createFsFileStore } from './fs-file-store'
 import { createGitBackup, withMutationHook } from './git-backup'
 import { createGraphService } from './graph-service'
 import { createServerIndexDb } from './index-db'
+
+// Restore-on-first-boot: a brand-new host (fresh Fly volume, new machine)
+// with a configured backup remote clones the graph before anything touches
+// the folder. Only when the graph dir does not exist at all — loadConfig
+// creates the standard layout, which would make the clone target non-empty.
+const bootRemote = process.env['REFLECT_GIT_REMOTE']
+const bootGraphDir = process.env['REFLECT_GRAPH_DIR']
+if (
+  bootRemote !== undefined &&
+  bootRemote !== '' &&
+  bootGraphDir !== undefined &&
+  bootGraphDir !== '' &&
+  !existsSync(bootGraphDir)
+) {
+  console.info('[reflect-server] graph folder missing — restoring from the backup remote')
+  execFileSync('git', ['clone', bootRemote, bootGraphDir], { stdio: 'inherit' })
+}
 
 const config = loadConfig(process.env)
 
@@ -46,6 +64,16 @@ if (backup !== null) {
 const webDistDirRaw =
   process.env['REFLECT_WEB_DIST'] ?? fileURLToPath(new URL('../../desktop/dist', import.meta.url))
 const webDistDir = existsSync(path.join(webDistDirRaw, 'index.html')) ? webDistDirRaw : null
+
+// Index the folder at boot so agent search/list work before (and without)
+// any browser session; runs in the background, the server accepts requests
+// immediately.
+void graph
+  .reconcile()
+  .then(({ applied, removed }) =>
+    console.info(`[reflect-server] index reconciled: ${applied} applied, ${removed} removed`),
+  )
+  .catch((cause: unknown) => console.error('[reflect-server] boot reconcile failed:', cause))
 
 const app = createApp(config, auth, router, graph, webDistDir)
 
