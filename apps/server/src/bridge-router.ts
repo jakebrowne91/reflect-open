@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { createJsonStore } from './json-store'
 import type { ServerConfig } from './config'
 import type { GraphFileStore } from './fs-file-store'
+import type { GitBackup } from './git-backup'
 import type { ServerIndexDb } from './index-db'
 
 /**
@@ -74,6 +75,7 @@ export function createBridgeRouter(
   config: ServerConfig,
   files: GraphFileStore,
   index: ServerIndexDb,
+  backup: GitBackup | null,
 ): BridgeRouter {
   const graphInfo = {
     root: config.graphDir,
@@ -257,13 +259,43 @@ export function createBridgeRouter(
         return null
       }
 
-      // Git backup is not wired up yet (the roadmap: the server owns the
-      // repo and commits/pushes itself). Reporting "not initialized" keeps
-      // the backup UI truthful — it shows backup as off rather than erroring.
+      // Git: the server owns the repository (see git-backup.ts). With backup
+      // disabled, "not initialized" keeps the UI truthfully showing it off.
       case 'git_status':
-      case 'git_setup':
+        return backup === null ? GIT_STATUS_UNINITIALIZED : backup.status()
+      case 'git_setup': {
+        if (backup === null) {
+          return GIT_STATUS_UNINITIALIZED
+        }
+        const { remoteUrl, branch } = z
+          .object({ remoteUrl: z.string().nullable(), branch: z.string().nullable() })
+          .parse(args)
+        return backup.setup(remoteUrl, branch)
+      }
       case 'git_disconnect':
-        return GIT_STATUS_UNINITIALIZED
+        return backup === null ? GIT_STATUS_UNINITIALIZED : backup.disconnect()
+      case 'git_commit_all': {
+        if (backup === null) {
+          throw new ReflectError('io', 'git backup is disabled on this server')
+        }
+        const { message } = z.object({ message: z.string() }).parse(args)
+        return backup.commitAll(message)
+      }
+      case 'git_fetch':
+        if (backup === null) {
+          throw new ReflectError('io', 'git backup is disabled on this server')
+        }
+        return backup.fetch()
+      case 'git_merge_remote':
+        if (backup === null) {
+          throw new ReflectError('io', 'git backup is disabled on this server')
+        }
+        return backup.merge()
+      case 'git_push':
+        if (backup === null) {
+          throw new ReflectError('io', 'git backup is disabled on this server')
+        }
+        return backup.push()
 
       // Semantic search: not available server-side yet; `uninitialized` is
       // the honest idle state and stops the desktop tree's status poll from

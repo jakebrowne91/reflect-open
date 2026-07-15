@@ -7,6 +7,7 @@ import { createSessionAuth } from './auth'
 import { createBridgeRouter } from './bridge-router'
 import { loadConfig } from './config'
 import { createFsFileStore } from './fs-file-store'
+import { createGitBackup, withMutationHook } from './git-backup'
 import { createGraphService } from './graph-service'
 import { createServerIndexDb } from './index-db'
 
@@ -21,11 +22,26 @@ if (!existsSync(migrationsDir)) {
   throw new Error(`index migrations not found at ${migrationsDir}`)
 }
 
-const files = createFsFileStore(config.graphDir)
+const backup = process.env['REFLECT_GIT_BACKUP'] === '0' ? null : createGitBackup(config.graphDir)
+const rawFiles = createFsFileStore(config.graphDir)
+const files = backup === null ? rawFiles : withMutationHook(rawFiles, backup.noteMutation)
 const index = createServerIndexDb(path.join(config.dataDir, 'index.db'), migrationsDir)
-const router = createBridgeRouter(config, files, index)
+const router = createBridgeRouter(config, files, index, backup)
 const graph = createGraphService(files, index)
 const auth = createSessionAuth(config.password, config.agentToken)
+
+if (backup !== null) {
+  // Initialize the repo (idempotent) and adopt a remote from the
+  // environment when given; failures surface in the log, not at boot.
+  backup
+    .setup(process.env['REFLECT_GIT_REMOTE'] ?? null, null)
+    .then((gitStatus) =>
+      console.info(
+        `[reflect-server] git:    ${gitStatus.remoteUrl ?? 'local history only (set REFLECT_GIT_REMOTE or connect in the app)'}`,
+      ),
+    )
+    .catch((cause: unknown) => console.error('[git-backup] setup failed:', cause))
+}
 
 const webDistDirRaw =
   process.env['REFLECT_WEB_DIST'] ?? fileURLToPath(new URL('../../desktop/dist', import.meta.url))
