@@ -5,6 +5,7 @@ import { queryClient } from '@/lib/query-client'
 import { registerAppCommands } from '@/lib/commands/app-commands'
 import { initializeExceptionTelemetry } from '@/lib/exception-telemetry'
 import { installNativeMenu } from '@/lib/native-menu/menu'
+import { installRemoteBridgeIfRequested } from '@/lib/remote-bridge'
 import { installTauriBridge } from '@/lib/tauri-bridge'
 import { PlatformRoot, warmPlatformRoot } from '@/platform-root'
 import { EditorFullWidthEffect } from '@/providers/editor-full-width'
@@ -15,6 +16,9 @@ import '@/styles/index.css'
 
 const reactRootOptions = initializeExceptionTelemetry()
 installTauriBridge()
+// A server-backed web session installs its bridge with the same timing as
+// the native one: before first render, so providers see it from the start.
+installRemoteBridgeIfRequested()
 // Start the platform resolve + surface-chunk fetch (and, on mobile, the
 // iCloud-container resolve) now, ahead of React's first render — the lazy
 // gate in PlatformRoot would otherwise serialize all of it behind the mount.

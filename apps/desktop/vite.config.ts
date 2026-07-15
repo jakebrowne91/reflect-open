@@ -9,6 +9,11 @@ import pkg from './package.json'
 // @ts-expect-error process is a Node.js global available in the Vite config context
 const host = process.env.TAURI_DEV_HOST
 
+// Where `?bridge=remote` sessions find their Reflect server (apps/server) in
+// dev; production serves the built app from the server itself, same-origin.
+// @ts-expect-error process is a Node.js global available in the Vite config context
+const reflectServerOrigin = process.env.REFLECT_SERVER_ORIGIN ?? 'http://localhost:8790'
+
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [
@@ -71,6 +76,10 @@ export default defineConfig(async () => ({
     watch: {
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ['**/src-tauri/**'],
+    },
+    proxy: {
+      '/api': reflectServerOrigin,
+      '/login': reflectServerOrigin,
     },
   },
 }))
