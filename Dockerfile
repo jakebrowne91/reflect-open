@@ -11,7 +11,7 @@ COPY . .
 RUN pnpm install --frozen-lockfile --filter @reflect/server...
 # A self-contained /srv/server: the server package plus its workspace deps
 # (core/db/utils travel as source; tsx runs them directly).
-RUN pnpm --filter @reflect/server deploy --prod /srv/server
+RUN pnpm --filter @reflect/server deploy --prod --legacy /srv/server
 
 FROM node:24-slim
 # git: the backup loop shells out to it. openssh-client: SSH remotes.
