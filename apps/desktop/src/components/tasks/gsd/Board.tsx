@@ -128,20 +128,30 @@ export function Board({ onOpenCard }: { onOpenCard: (cardPublicId: string) => vo
 
   // Kan's board keymap, ported verbatim: c new card · arrows navigate · Tab
   // move across lists · Enter open · l labels · p cycle priority · e to Done ·
-  // Delete/Backspace remove.
+  // Delete/Backspace remove. Registered in the CAPTURE phase and stopping
+  // propagation for the keys it owns, so Reflect's own Tasks keyboard handler
+  // (a document listener that would otherwise swallow arrows/etc. in board
+  // view) never sees them.
   useEffect(() => {
+    const arrows = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']
+    const singleKeys = ['c', 'l', 'p', 'e']
+    const cardKeys = ['Tab', 'Enter', 'Delete', 'Backspace']
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (labelCardId !== null || isEditableTarget(event.target)) return
       const key = event.key.toLowerCase()
+      const handled =
+        arrows.includes(event.key) || cardKeys.includes(event.key) || singleKeys.includes(key)
+      if (!handled) return
+      event.preventDefault()
+      event.stopImmediatePropagation()
 
       if (key === 'c') {
-        event.preventDefault()
         const firstList = columns[0]
-        if (firstList !== undefined) mutations.createCard({ title: 'New card', listPublicId: firstList.publicId })
+        if (firstList !== undefined)
+          mutations.createCard({ title: 'New card', listPublicId: firstList.publicId })
         return
       }
-      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) {
-        event.preventDefault()
+      if (arrows.includes(event.key)) {
         moveSelection(
           event.key === 'ArrowUp'
             ? 'up'
@@ -157,43 +167,39 @@ export function Board({ onOpenCard }: { onOpenCard: (cardPublicId: string) => vo
       if (card === undefined) return
 
       if (event.key === 'Tab') {
-        event.preventDefault()
         const pos = findPos(card.publicId)
         if (pos !== null) {
           const targetList = columns[pos.li + (event.shiftKey ? -1 : 1)]
-          if (targetList !== undefined) mutations.moveCard(card.publicId, targetList.publicId, targetList.cards.length)
+          if (targetList !== undefined)
+            mutations.moveCard(card.publicId, targetList.publicId, targetList.cards.length)
         }
         return
       }
       if (event.key === 'Enter') {
-        event.preventDefault()
         onOpenCard(card.publicId)
         return
       }
       if (key === 'l') {
-        event.preventDefault()
         setLabelCardId(card.publicId)
         return
       }
       if (key === 'p') {
-        event.preventDefault()
         mutations.updateCard(card.publicId, { priority: getNextPriority(card.priority) })
         return
       }
       if (key === 'e') {
-        event.preventDefault()
-        const done = columns.find((l) => l.name.toLowerCase() === 'done') ?? columns[columns.length - 1]
+        const done =
+          columns.find((l) => l.name.toLowerCase() === 'done') ?? columns[columns.length - 1]
         if (done !== undefined) mutations.moveCard(card.publicId, done.publicId, done.cards.length)
         return
       }
       if (event.key === 'Delete' || event.key === 'Backspace') {
-        event.preventDefault()
         mutations.deleteCard(card.publicId)
         setSelectedId(null)
       }
     }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
+    document.addEventListener('keydown', handleKeyDown, true)
+    return () => document.removeEventListener('keydown', handleKeyDown, true)
   }, [activeSelectionId, cardsById, columns, findPos, labelCardId, moveSelection, mutations, onOpenCard])
 
   const onDragStart = useCallback((event: DragStartEvent) => {
@@ -257,6 +263,7 @@ export function Board({ onOpenCard }: { onOpenCard: (cardPublicId: string) => vo
   }
 
   return (
+    <div className="relative h-full min-h-0">
     <DndContext
       sensors={sensors}
       collisionDetection={closestCorners}
@@ -297,6 +304,8 @@ export function Board({ onOpenCard }: { onOpenCard: (cardPublicId: string) => vo
                     }}
                     onOpen={() => onOpenCard(card.publicId)}
                     onUpdate={(patch) => mutations.updateCard(card.publicId, patch)}
+                    onLabels={() => setLabelCardId(card.publicId)}
+                    onDelete={() => mutations.deleteCard(card.publicId)}
                   />
                 ))}
               </SortableContext>
@@ -314,6 +323,10 @@ export function Board({ onOpenCard }: { onOpenCard: (cardPublicId: string) => vo
           </button>
         ) : null}
       </div>
+      <div className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full border border-light-400 bg-light-50/90 px-3 py-1 text-[11px] text-light-800 shadow-sm dark:border-dark-400 dark:bg-dark-100/90 dark:text-dark-800">
+        hover a card · <b>C</b> new · <b>↑↓←→</b> move · <b>Tab</b> list · <b>P</b> priority ·{' '}
+        <b>L</b> labels · <b>E</b> done · <b>⌫</b> delete
+      </div>
       <DragOverlay dropAnimation={null}>
         {activeId !== null && cardsById.has(activeId) ? (
           <Card {...cardProps(cardsById.get(activeId) as BoardCard)} isSelected />
@@ -328,8 +341,17 @@ export function Board({ onOpenCard }: { onOpenCard: (cardPublicId: string) => vo
         />
       ) : null}
     </DndContext>
+    </div>
   )
 }
+
+const PRIORITY_LABELS: { value: CardPriority | null; label: string }[] = [
+  { value: 'urgent', label: 'Urgent' },
+  { value: 'high', label: 'High' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'low', label: 'Low' },
+  { value: null, label: 'No priority' },
+]
 
 function SortableCard({
   card,
@@ -337,31 +359,104 @@ function SortableCard({
   onSelect,
   onOpen,
   onUpdate,
+  onLabels,
+  onDelete,
 }: {
   card: BoardCard
   isSelected: boolean
   onSelect: () => void
   onOpen: () => void
   onUpdate: (patch: { title?: string; description?: string; priority?: string | null }) => void
+  onLabels: () => void
+  onDelete: () => void
 }): ReactElement {
   const { setNodeRef, attributes, listeners, transform, transition, isDragging } = useSortable({
     id: card.publicId,
   })
+  const [menuOpen, setMenuOpen] = useState(false)
   return (
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Translate.toString(transform), transition }}
-      {...attributes}
-      {...listeners}
-      onClick={onOpen}
-      className={isDragging ? 'opacity-40' : ''}
+      onMouseEnter={onSelect}
+      className={`group relative ${isDragging ? 'opacity-40' : ''}`}
     >
-      <Card
-        {...cardProps(card)}
-        isSelected={isSelected}
-        onSelect={onSelect}
-        onUpdate={onUpdate}
-      />
+      {/* The card body carries the drag listeners and opens the detail. */}
+      <div {...attributes} {...listeners} onClick={onOpen}>
+        <Card {...cardProps(card)} isSelected={isSelected} onSelect={onSelect} onUpdate={onUpdate} />
+      </div>
+      {/* Clickable menu: priority, labels, delete — no keyboard needed. */}
+      <div className="absolute right-1 top-1" onClick={(e) => e.stopPropagation()}>
+        <button
+          type="button"
+          aria-label="Card menu"
+          onClick={(e) => {
+            e.stopPropagation()
+            setMenuOpen((v) => !v)
+          }}
+          className="rounded p-0.5 text-light-800 opacity-0 hover:bg-light-200 group-hover:opacity-100 dark:text-dark-800 dark:hover:bg-dark-300"
+        >
+          <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+            <path d="M6 10a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM11.5 10a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM17 10a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" />
+          </svg>
+        </button>
+        {menuOpen ? (
+          <>
+            <button
+              type="button"
+              aria-label="Close menu"
+              className="fixed inset-0 z-[90] cursor-default"
+              onClick={(e) => {
+                e.stopPropagation()
+                setMenuOpen(false)
+              }}
+            />
+            <div className="absolute right-0 z-[100] mt-1 w-44 rounded-md border border-light-200 bg-white p-1 shadow-lg dark:border-dark-400 dark:bg-dark-300">
+              <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-light-800 dark:text-dark-800">
+                Priority
+              </div>
+              {PRIORITY_LABELS.map((p) => (
+                <button
+                  key={p.label}
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onUpdate({ priority: p.value })
+                    setMenuOpen(false)
+                  }}
+                  className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-sm text-neutral-900 hover:bg-light-200 dark:text-dark-950 dark:hover:bg-dark-400"
+                >
+                  {p.label}
+                  {(card.priority ?? null) === p.value ? <span className="ml-auto">✓</span> : null}
+                </button>
+              ))}
+              <div className="my-1 border-t border-light-200 dark:border-dark-400" />
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onLabels()
+                  setMenuOpen(false)
+                }}
+                className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-sm text-neutral-900 hover:bg-light-200 dark:text-dark-950 dark:hover:bg-dark-400"
+              >
+                Add / edit labels
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onDelete()
+                  setMenuOpen(false)
+                }}
+                className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-sm text-red-600 hover:bg-light-200 dark:text-red-400 dark:hover:bg-dark-400"
+              >
+                Delete card
+              </button>
+            </div>
+          </>
+        ) : null}
+      </div>
     </div>
   )
 }
