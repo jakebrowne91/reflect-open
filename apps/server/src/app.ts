@@ -20,6 +20,36 @@ import type { GraphService } from './graph-service'
 const SESSION_COOKIE = 'reflect_session'
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1_000
 
+// Login throttle: short passwords on a public host live or die by this.
+// Sliding per-IP window, in memory — a restart forgiving the counters is an
+// acceptable trade for zero infrastructure.
+const LOGIN_WINDOW_MS = 15 * 60_000
+const LOGIN_MAX_FAILURES = 5
+const failedLogins = new Map<string, number[]>()
+
+function clientIp(c: Context): string {
+  return (
+    c.req.header('fly-client-ip') ??
+    c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ??
+    'local'
+  )
+}
+
+function loginBlocked(ip: string): boolean {
+  const cutoff = Date.now() - LOGIN_WINDOW_MS
+  const recent = (failedLogins.get(ip) ?? []).filter((at) => at >= cutoff)
+  if (recent.length === 0) {
+    failedLogins.delete(ip)
+    return false
+  }
+  failedLogins.set(ip, recent)
+  return recent.length >= LOGIN_MAX_FAILURES
+}
+
+function recordLoginFailure(ip: string): void {
+  failedLogins.set(ip, [...(failedLogins.get(ip) ?? []), Date.now()])
+}
+
 const invokeBodySchema = z.object({
   command: z.string(),
   args: z.record(z.string(), z.unknown()),
@@ -88,11 +118,20 @@ export function createApp(
       password = typeof form['password'] === 'string' ? form['password'] : ''
       next = typeof form['next'] === 'string' ? form['next'] : '/'
     }
+    const ip = clientIp(c)
+    if (loginBlocked(ip)) {
+      return c.json(
+        { error: { kind: 'auth', message: 'too many attempts — try again in 15 minutes' } },
+        429,
+      )
+    }
     if (!auth.checkPassword(password)) {
+      recordLoginFailure(ip)
       return wantsJson
         ? c.json({ error: { kind: 'auth', message: 'wrong password' } }, 401)
         : c.redirect(`/login?failed=1&next=${encodeURIComponent(next)}`, 302)
     }
+    failedLogins.delete(ip)
     setSessionCookie(c)
     if (wantsJson) {
       return c.json({ ok: true })
@@ -105,9 +144,18 @@ export function createApp(
   // password in a URL lands in histories and access logs.
   if (process.env['REFLECT_ALLOW_URL_LOGIN'] === '1') {
     app.get('/api/login', (c) => {
+      const ip = clientIp(c)
+      if (loginBlocked(ip)) {
+        return c.json(
+          { error: { kind: 'auth', message: 'too many attempts — try again in 15 minutes' } },
+          429,
+        )
+      }
       if (!auth.checkPassword(c.req.query('password') ?? '')) {
+        recordLoginFailure(ip)
         return c.json({ error: { kind: 'auth', message: 'wrong password' } }, 401)
       }
+      failedLogins.delete(ip)
       setSessionCookie(c)
       const next = c.req.query('next') ?? '/'
       return c.redirect(next.startsWith('/') && !next.startsWith('//') ? next : '/', 302)

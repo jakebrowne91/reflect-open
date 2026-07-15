@@ -29,8 +29,13 @@ export function loadConfig(env: NodeJS.ProcessEnv): ServerConfig {
     throw new Error('REFLECT_GRAPH_DIR is required (the folder your markdown notes live in)')
   }
   const password = env['REFLECT_PASSWORD']
-  if (password === undefined || password.length < 8) {
-    throw new Error('REFLECT_PASSWORD is required and must be at least 8 characters')
+  if (password === undefined || password.length < 4) {
+    throw new Error('REFLECT_PASSWORD is required (4 characters minimum)')
+  }
+  if (password.length < 12) {
+    console.warn(
+      '[reflect-server] REFLECT_PASSWORD is short — login is rate-limited, but a longer passphrase is safer on a public host',
+    )
   }
 
   const graphDir = path.resolve(graphDirRaw)
