@@ -123,7 +123,12 @@ export function fetchCard(cardPublicId: string): Promise<BoardCard> {
 }
 
 export function useLabelMutations(): {
-  createLabel: (input: { boardPublicId: string; name: string; colourCode: string }) => void
+  createAndAssignLabel: (input: {
+    cardPublicId: string
+    boardPublicId: string
+    name: string
+    colourCode: string
+  }) => void
   toggleCardLabel: (cardPublicId: string, labelPublicId: string) => void
 } {
   const queryClient = useQueryClient()
@@ -131,16 +136,27 @@ export function useLabelMutations(): {
     void queryClient.invalidateQueries({ queryKey: ['gsd', 'board'] })
     void queryClient.invalidateQueries({ queryKey: ['gsd', 'card'] })
   }
-  const create = useMutation({
-    mutationFn: (input: { boardPublicId: string; name: string; colourCode: string }) =>
-      boardFetch('/labels', z.unknown(), {
+  // Create the board label, then immediately put it on the card — so creating
+  // a label from a card shows it on that card, not just in the board palette.
+  const createAndAssign = useMutation({
+    mutationFn: async (input: {
+      cardPublicId: string
+      boardPublicId: string
+      name: string
+      colourCode: string
+    }) => {
+      const created = await boardFetch('/labels', createdSchema, {
         method: 'POST',
         body: JSON.stringify({
           name: input.name,
           colourCode: input.colourCode,
           boardPublicId: input.boardPublicId,
         }),
-      }),
+      })
+      await boardFetch(`/cards/${input.cardPublicId}/labels/${created.publicId}`, z.unknown(), {
+        method: 'PUT',
+      })
+    },
     onSettled,
   })
   const toggle = useMutation({
@@ -151,7 +167,7 @@ export function useLabelMutations(): {
     onSettled,
   })
   return {
-    createLabel: (input) => create.mutate(input),
+    createAndAssignLabel: (input) => createAndAssign.mutate(input),
     toggleCardLabel: (cardPublicId, labelPublicId) =>
       toggle.mutate({ cardPublicId, labelPublicId }),
   }

@@ -30,7 +30,7 @@ export function LabelEditor({
   onClose: () => void
 }): ReactElement {
   const { card } = useCard(cardPublicId)
-  const { createLabel, toggleCardLabel } = useLabelMutations()
+  const { createAndAssignLabel, toggleCardLabel } = useLabelMutations()
   const [name, setName] = useState('')
   const [colour, setColour] = useState(LABEL_COLOURS[0] as string)
 
@@ -72,7 +72,7 @@ export function LabelEditor({
           onSubmit={(event) => {
             event.preventDefault()
             if (name.trim()) {
-              createLabel({ boardPublicId, name: name.trim(), colourCode: colour })
+              createAndAssignLabel({ cardPublicId, boardPublicId, name: name.trim(), colourCode: colour })
               setName('')
             }
           }}
