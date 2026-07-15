@@ -10,6 +10,7 @@ import { loadConfig } from './config'
 import { createFsFileStore } from './fs-file-store'
 import { createGitBackup, withMutationHook } from './git-backup'
 import { createGraphService } from './graph-service'
+import { createGsdSync } from './gsd-sync'
 import { createServerIndexDb } from './index-db'
 
 // Restore-on-first-boot: a brand-new host (fresh Fly volume, new machine)
@@ -67,12 +68,29 @@ const webDistDir = existsSync(path.join(webDistDirRaw, 'index.html')) ? webDistD
 
 // Index the folder at boot so agent search/list work before (and without)
 // any browser session; runs in the background, the server accepts requests
-// immediately.
+// immediately. GSD task sync (when configured) starts after the first
+// reconcile so it diffs against a fresh projection.
+const gsdUrl = process.env['REFLECT_GSD_URL']
+const gsdApiKey = process.env['REFLECT_GSD_API_KEY']
 void graph
   .reconcile()
-  .then(({ applied, removed }) =>
-    console.info(`[reflect-server] index reconciled: ${applied} applied, ${removed} removed`),
-  )
+  .then(({ applied, removed }) => {
+    console.info(`[reflect-server] index reconciled: ${applied} applied, ${removed} removed`)
+    if (gsdUrl !== undefined && gsdUrl !== '' && gsdApiKey !== undefined && gsdApiKey !== '') {
+      createGsdSync(
+        {
+          baseUrl: gsdUrl.replace(/\/+$/, ''),
+          apiKey: gsdApiKey,
+          boardName: process.env['REFLECT_GSD_BOARD'] ?? 'Reflect',
+          pollMs: Number(process.env['REFLECT_GSD_POLL_MS'] ?? 60_000),
+          dataDir: config.dataDir,
+        },
+        graph,
+        index,
+        files.read,
+      ).start()
+    }
+  })
   .catch((cause: unknown) => console.error('[reflect-server] boot reconcile failed:', cause))
 
 const app = createApp(config, auth, router, graph, webDistDir)
