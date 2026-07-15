@@ -1,0 +1,297 @@
+import { useRouter } from "next/router";
+import { t } from "@lingui/core/macro";
+import {
+  HiMiniXMark,
+  HiOutlineClock,
+  HiOutlineIdentification,
+  HiOutlineInboxStack,
+  HiOutlineSquare3Stack3D,
+  HiOutlineTag,
+  HiOutlineUserCircle,
+} from "react-icons/hi2";
+import { IoFilterOutline } from "react-icons/io5";
+
+import Avatar from "~/components/Avatar";
+import Button from "~/components/Button";
+import CheckboxDropdown from "~/components/CheckboxDropdown";
+import LabelIcon from "~/components/LabelIcon";
+import {
+  formatMemberDisplayName,
+  formatToArray,
+  getAvatarUrl,
+} from "~/utils/helpers";
+import { TicketFiltersContent } from "./TicketFilters";
+import {
+  boardSourceFilterOptions,
+  normaliseBoardSourceFilters,
+} from "../sourceFilter";
+
+interface Member {
+  publicId: string;
+  user: {
+    name: string | null;
+    image: string | null;
+    email: string;
+  } | null;
+}
+
+interface Label {
+  publicId: string;
+  name: string;
+  colourCode: string | null;
+}
+
+interface List {
+  publicId: string;
+  name: string;
+}
+
+const Filters = ({
+  position = "right",
+  labels,
+  members,
+  lists,
+  isLoading,
+}: {
+  position?: "left" | "right";
+  labels: Label[];
+  members: Member[];
+  lists: List[];
+  isLoading: boolean;
+}) => {
+  const router = useRouter();
+
+  const clearFilters = async (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const nextQuery = { ...router.query };
+    delete nextQuery.members;
+    delete nextQuery.labels;
+    delete nextQuery.lists;
+    delete nextQuery.source;
+    delete nextQuery.dueDate;
+    delete nextQuery.supportUserId;
+    delete nextQuery.sourceSystem;
+    delete nextQuery.sourceChannel;
+    delete nextQuery.reportedFrom;
+    delete nextQuery.reportedTo;
+    delete nextQuery.updatedFrom;
+    delete nextQuery.updatedTo;
+
+    try {
+      await router.push({
+        pathname: router.pathname,
+        query: nextQuery,
+      });
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const formattedMembers = members.map((member) => ({
+    key: member.publicId,
+    value: formatMemberDisplayName(
+      member.user?.name ?? null,
+      member.user?.email ?? null,
+    ),
+    selected: !!router.query.members?.includes(member.publicId),
+    leftIcon: (
+      <Avatar
+        size="xs"
+        name={member.user?.name ?? ""}
+        imageUrl={
+          member.user?.image ? getAvatarUrl(member.user.image) : undefined
+        }
+        email={member.user?.email ?? ""}
+      />
+    ),
+  }));
+
+  const formattedLabels = labels.map((label) => ({
+    key: label.publicId,
+    value: label.name,
+    selected: !!router.query.labels?.includes(label.publicId),
+    leftIcon: <LabelIcon colourCode={label.colourCode} />,
+  }));
+
+  const formattedLists = lists.map((list) => ({
+    key: list.publicId,
+    value: list.name,
+    selected: !!router.query.lists?.includes(list.publicId),
+  }));
+
+  const dueDateItems = [
+    {
+      key: "overdue",
+      value: t`Overdue`,
+      selected: !!router.query.dueDate?.includes("overdue"),
+    },
+    {
+      key: "today",
+      value: t`Due today`,
+      selected: !!router.query.dueDate?.includes("today"),
+    },
+    {
+      key: "tomorrow",
+      value: t`Due tomorrow`,
+      selected: !!router.query.dueDate?.includes("tomorrow"),
+    },
+    {
+      key: "next-week",
+      value: t`Due next week`,
+      selected: !!router.query.dueDate?.includes("next-week"),
+    },
+    {
+      key: "next-month",
+      value: t`Due next month`,
+      selected: !!router.query.dueDate?.includes("next-month"),
+    },
+    {
+      key: "no-due-date",
+      value: t`No dates`,
+      selected: !!router.query.dueDate?.includes("no-due-date"),
+    },
+  ];
+
+  const selectedSources = normaliseBoardSourceFilters(
+    formatToArray(router.query.source),
+  );
+  const sourceItems = boardSourceFilterOptions.map((source) => ({
+    key: source.key,
+    value: source.label,
+    selected: selectedSources.includes(source.key),
+  }));
+
+  const groups = [
+    ...(formattedMembers.length
+      ? [
+          {
+            key: "members",
+            label: t`Members`,
+            icon: <HiOutlineUserCircle size={16} />,
+            items: formattedMembers,
+          },
+        ]
+      : []),
+    {
+      key: "labels",
+      label: t`Labels`,
+      icon: <HiOutlineTag size={16} />,
+      items: formattedLabels,
+    },
+    ...(formattedLists.length
+      ? [
+          {
+            key: "lists",
+            label: t`Lists`,
+            icon: <HiOutlineSquare3Stack3D size={16} />,
+            items: formattedLists,
+          },
+        ]
+      : []),
+    {
+      key: "source",
+      label: t`Source`,
+      icon: <HiOutlineInboxStack size={16} />,
+      items: sourceItems,
+    },
+    {
+      key: "dueDate",
+      label: t`Due date`,
+      icon: <HiOutlineClock size={16} />,
+      items: dueDateItems,
+    },
+    {
+      key: "ticketFilters",
+      label: t`Ticket filters`,
+      icon: <HiOutlineIdentification size={16} />,
+      items: [],
+      panel: (
+        <div className="w-80 max-w-[calc(100vw-2rem)] p-2">
+          <TicketFiltersContent />
+        </div>
+      ),
+    },
+  ];
+
+  const handleSelect = async (
+    groupKey: string | null,
+    item: { key: string },
+  ) => {
+    if (groupKey === null) return;
+    const currentQuery = router.query[groupKey] ?? [];
+    const formattedCurrentQuery = Array.isArray(currentQuery)
+      ? currentQuery
+      : [currentQuery];
+
+    const updatedQuery = formattedCurrentQuery.includes(item.key)
+      ? formattedCurrentQuery.filter((key) => key !== item.key)
+      : [...formattedCurrentQuery, item.key];
+
+    try {
+      await router.push({
+        pathname: router.pathname,
+        query: { ...router.query, [groupKey]: updatedQuery },
+      });
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const ticketFilterCount = [
+    ...selectedSources,
+    router.query.supportUserId,
+    router.query.sourceSystem,
+    router.query.sourceChannel,
+    router.query.reportedFrom,
+    router.query.reportedTo,
+    router.query.updatedFrom,
+    router.query.updatedTo,
+  ].filter((value) =>
+    Array.isArray(value) ? value.length > 0 : Boolean(value),
+  ).length;
+
+  const numOfFilters =
+    [
+      ...formatToArray(router.query.members),
+      ...formatToArray(router.query.labels),
+      ...formatToArray(router.query.lists),
+      ...formatToArray(router.query.dueDate),
+    ].length + ticketFilterCount;
+
+  return (
+    <div className="relative">
+      <CheckboxDropdown
+        groups={groups}
+        handleSelect={handleSelect}
+        menuSpacing="md"
+        menuWidth="lg"
+        position={position}
+      >
+        <Button
+          variant={numOfFilters > 0 ? "primary" : "secondary"}
+          disabled={isLoading}
+          iconLeft={<IoFilterOutline />}
+        >
+          {t`Filter`}
+        </Button>
+        {numOfFilters > 0 && (
+          <button
+            type="button"
+            onClick={clearFilters}
+            aria-label={t`Clear filters`}
+            className="group absolute -right-[8px] -top-[8px] flex h-5 w-5 items-center justify-center rounded-full border-2 border-light-100 bg-light-1000 text-[8px] font-[700] text-light-600 dark:border-dark-50 dark:bg-dark-1000 dark:text-dark-600"
+          >
+            <span className="group-hover:hidden">{numOfFilters}</span>
+            <span className="hidden text-light-50 group-hover:inline dark:text-dark-50">
+              <HiMiniXMark size={12} />
+            </span>
+          </button>
+        )}
+      </CheckboxDropdown>
+    </div>
+  );
+};
+
+export default Filters;

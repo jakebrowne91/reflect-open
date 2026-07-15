@@ -1,5 +1,10 @@
 packages:
   - apps/*
+  # apps/gsd is a vendored, self-contained monorepo (the GSD/Kan app: its own
+  # pnpm-workspace, lockfile, and Next.js/tRPC/drizzle stack). Keep it out of
+  # the root workspace so its nested packages and conflicting deps don't merge
+  # into Reflect's graph — it installs and builds on its own.
+  - '!apps/gsd'
   - packages/*
   - design-system
 

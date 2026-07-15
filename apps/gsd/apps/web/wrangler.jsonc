@@ -1,0 +1,58 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "main": ".open-next/worker.js",
+  "name": "gsd-web",
+  "workers_dev": true,
+  "preview_urls": true,
+  "compatibility_date": "2026-05-20",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS",
+  },
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "gsd-web",
+    },
+  ],
+  "images": {
+    "binding": "IMAGES",
+  },
+  "observability": {
+    "enabled": true,
+  },
+  "vars": {
+    "POSTGRES_POOL_MAX": "1",
+    "POSTGRES_SSL": "true",
+    "POSTGRES_SSL_REJECT_UNAUTHORIZED": "false",
+    "RETROGRADE_SLACK_BOT_CALLBACK_URL": "https://slack-bot-ari-gold.retrogradeai.workers.dev",
+    "S3_ENDPOINT": "https://yxivsrvxtazgwfixchso.storage.supabase.co/storage/v1/s3",
+    "S3_FORCE_PATH_STYLE": "true",
+    "BETTER_AUTH_COOKIE_PREFIX": "gsd",
+    "NEXT_PUBLIC_BASE_URL": "https://gsd.creatorcomputecompany.com",
+    "NEXT_PUBLIC_RETROGRADE_ADMIN_APP_URL": "https://admin.creatorcomputecompany.com/gsd",
+    "NEXT_PUBLIC_ALLOW_CREDENTIALS": "true",
+    "NEXT_PUBLIC_DISABLE_EMAIL": "true",
+    "NEXT_PUBLIC_DISABLE_SIGN_UP": "false",
+    "NEXT_PUBLIC_WHITE_LABEL_HIDE_POWERED_BY": "true",
+    "NEXT_PUBLIC_STORAGE_URL": "https://yxivsrvxtazgwfixchso.storage.supabase.co/storage/v1/object/public",
+    "NEXT_PUBLIC_STORAGE_DOMAIN": "yxivsrvxtazgwfixchso.storage.supabase.co",
+    "NEXT_PUBLIC_AVATAR_BUCKET_NAME": "gsd-avatars",
+    "NEXT_PUBLIC_ATTACHMENTS_BUCKET_NAME": "gsd-attachments",
+    "NEXT_PUBLIC_USE_VIRTUAL_HOSTED_URLS": "false",
+  },
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "bba886aeaf304ca08f6a1eca69d2888e",
+    },
+  ],
+  "routes": [
+    {
+      "pattern": "gsd.creatorcomputecompany.com",
+      "zone_name": "creatorcomputecompany.com",
+      "custom_domain": true,
+    },
+  ],
+}

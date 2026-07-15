@@ -1,0 +1,1209 @@
+import type { ReactNode } from "react";
+import Link from "next/link";
+import { useRouter } from "next/router";
+import { t } from "@lingui/core/macro";
+import { useEffect, useState } from "react";
+import { useForm } from "react-hook-form";
+import { HiOutlineClock, HiOutlineCommandLine, HiXMark } from "react-icons/hi2";
+import { IoChevronForwardSharp } from "react-icons/io5";
+
+import type { GetCardByIdOutput } from "@kan/api/types";
+import { authClient } from "@kan/auth/client";
+
+import type {
+  SupportContext,
+  SupportParameter,
+} from "~/utils/retrogradeSupport";
+import Avatar from "~/components/Avatar";
+import Button from "~/components/Button";
+import Editor from "~/components/Editor";
+import FeedbackModal from "~/components/FeedbackModal";
+import { LabelForm } from "~/components/LabelForm";
+import LabelIcon from "~/components/LabelIcon";
+import Modal from "~/components/modal";
+import { NewWorkspaceForm } from "~/components/NewWorkspaceForm";
+import { PageHead } from "~/components/PageHead";
+import { EditYouTubeModal } from "~/components/YouTubeEmbed/EditYouTubeModal";
+import { env } from "~/env";
+import { usePermissions } from "~/hooks/usePermissions";
+import { useModal } from "~/providers/modal";
+import { usePopup } from "~/providers/popup";
+import { useWorkspace } from "~/providers/workspace";
+import { api } from "~/utils/api";
+import { invalidateCard } from "~/utils/cardInvalidation";
+import { formatMemberDisplayName, getAvatarUrl } from "~/utils/helpers";
+import { parseRetrogradeSupportContext } from "~/utils/retrogradeSupport";
+import { DeleteLabelConfirmation } from "../../components/DeleteLabelConfirmation";
+import ActivityList from "./components/ActivityList";
+import { AttachmentThumbnails } from "./components/AttachmentThumbnails";
+import { AttachmentUpload } from "./components/AttachmentUpload";
+import Checklists from "./components/Checklists";
+import { DeleteCardConfirmation } from "./components/DeleteCardConfirmation";
+import { DeleteChecklistConfirmation } from "./components/DeleteChecklistConfirmation";
+import { DeleteCommentConfirmation } from "./components/DeleteCommentConfirmation";
+import Dropdown from "./components/Dropdown";
+import { DueDateSelector } from "./components/DueDateSelector";
+import LabelSelector from "./components/LabelSelector";
+import ListSelector from "./components/ListSelector";
+import MemberSelector from "./components/MemberSelector";
+import { NewChecklistForm } from "./components/NewChecklistForm";
+import NewCommentForm from "./components/NewCommentForm";
+
+interface FormValues {
+  cardId: string;
+  title: string;
+  description: string;
+}
+
+const DEFAULT_RETROGRADE_ADMIN_APP_URL =
+  "https://admin.creatorcomputecompany.com/gsd";
+
+type CardDetail = NonNullable<GetCardByIdOutput>;
+type SupportMetadata = NonNullable<CardDetail["supportTicketMetadata"]>;
+
+function getRetrogradeAdminAppUrl() {
+  return (
+    env.NEXT_PUBLIC_RETROGRADE_ADMIN_APP_URL ?? DEFAULT_RETROGRADE_ADMIN_APP_URL
+  ).replace(/\/+$/, "");
+}
+
+function buildAdminUrl(path: string) {
+  return `${getRetrogradeAdminAppUrl()}${path}`;
+}
+
+function buildGitHubRepoUrl(repoFullName: string) {
+  return /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repoFullName)
+    ? `https://github.com/${repoFullName}`
+    : null;
+}
+
+function formatSupportDate(value: Date | string | null | undefined) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function firstSupportValue(...values: Array<string | null | undefined>) {
+  return values.find((value) => value?.trim())?.trim() ?? null;
+}
+
+function extractMarkdownSection(
+  description: string | null | undefined,
+  heading: string,
+) {
+  if (!description) return null;
+  const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`^##\\s+${escapedHeading}\\s*$`, "im").exec(
+    description,
+  );
+  if (!match) return null;
+
+  const start = match.index + match[0].length;
+  const rest = description.slice(start);
+  const nextHeading = /^##\s+/m.exec(rest);
+  const section = rest.slice(0, nextHeading?.index).trim();
+  return section || null;
+}
+
+function extractLegacyEmailBody(details: string | null) {
+  if (!details) return null;
+  const match = /(?:^|\n)Email body:\s*\n([\s\S]*)$/i.exec(details);
+  return match?.[1]?.trim() || null;
+}
+
+function stripLegacyEmailBody(details: string | null) {
+  return details?.replace(/\nEmail body:\s*\n[\s\S]*$/i, "").trim() || null;
+}
+
+function buildSupportParameterRows(card: CardDetail) {
+  const metadata = card.supportTicketMetadata;
+  const legacy = parseRetrogradeSupportContext(card.description);
+
+  const rows = [
+    {
+      key: "eventId",
+      label: "Event ID",
+      value: firstSupportValue(
+        metadata?.sourceEventId,
+        metadata?.externalId,
+        legacy?.byKey.eventId,
+      ),
+    },
+    {
+      key: "sourceCaseKey",
+      label: "Source case key",
+      value: firstSupportValue(metadata?.sourceCaseKey),
+    },
+    {
+      key: "supportCaseId",
+      label: "Support case ID",
+      value: firstSupportValue(
+        metadata?.supportCaseId,
+        legacy?.byKey.supportCaseId,
+      ),
+    },
+    {
+      key: "customerName",
+      label: "Customer",
+      value: firstSupportValue(metadata?.customerName),
+    },
+    {
+      key: "email",
+      label: "Email",
+      value: firstSupportValue(metadata?.email, legacy?.byKey.email),
+    },
+    {
+      key: "userId",
+      label: "User ID",
+      value: firstSupportValue(metadata?.userId, legacy?.byKey.userId),
+    },
+    {
+      key: "emmaUserId",
+      label: "Emma user ID",
+      value: firstSupportValue(metadata?.emmaUserId, legacy?.byKey.emmaUserId),
+    },
+    {
+      key: "issueCategory",
+      label: "Issue category",
+      value: firstSupportValue(
+        metadata?.issueCategory,
+        legacy?.byKey.issueCategory,
+      ),
+    },
+    {
+      key: "reportedAt",
+      label: "Reported at",
+      value: firstSupportValue(
+        formatSupportDate(metadata?.reportedAt),
+        legacy?.byKey.reportedAt,
+      ),
+    },
+    {
+      key: "sourceSystem",
+      label: "Source system",
+      value: firstSupportValue(metadata?.sourceSystem),
+    },
+    {
+      key: "sourceChannel",
+      label: "Source channel",
+      value: firstSupportValue(
+        metadata?.sourceChannel,
+        legacy?.byKey.sourceChannel,
+      ),
+    },
+    {
+      key: "provider",
+      label: "Provider",
+      value: firstSupportValue(metadata?.provider),
+    },
+    {
+      key: "providerMessageId",
+      label: "Provider message ID",
+      value: firstSupportValue(metadata?.providerMessageId),
+    },
+    {
+      key: "providerThreadId",
+      label: "Provider thread ID",
+      value: firstSupportValue(metadata?.providerThreadId),
+    },
+    {
+      key: "mailbox",
+      label: "Mailbox",
+      value: firstSupportValue(metadata?.mailbox),
+    },
+    {
+      key: "ariSessionUrl",
+      label: "Ari session",
+      value: firstSupportValue(
+        metadata?.ariSessionUrl,
+        metadata?.ariSessionId,
+        legacy?.byKey.ariSessionUrl,
+        legacy?.byKey.ariSessionId,
+      ),
+    },
+    {
+      key: "repoFullName",
+      label: "Repo",
+      value: firstSupportValue(
+        metadata?.repoFullName,
+        legacy?.byKey.repoFullName,
+      ),
+    },
+  ];
+
+  return rows.filter(
+    (row): row is { key: string; label: string; value: string } =>
+      Boolean(row.value),
+  );
+}
+
+function getSupportRowLink(
+  row: { key: string; value: string },
+  metadata: SupportMetadata | null,
+) {
+  const creatorUserId = metadata?.userId;
+
+  if (row.key === "userId") {
+    return {
+      href: buildAdminUrl(`/user-activity/${encodeURIComponent(row.value)}`),
+      target: "_top",
+    };
+  }
+
+  if (row.key === "emmaUserId" || row.key === "email") {
+    return {
+      href: creatorUserId
+        ? buildAdminUrl(`/user-activity/${encodeURIComponent(creatorUserId)}`)
+        : buildAdminUrl(`/users?search=${encodeURIComponent(row.value)}`),
+      target: "_top",
+    };
+  }
+
+  if (row.key === "ariSessionUrl" && /^https?:\/\//i.test(row.value)) {
+    return { href: row.value, target: "_blank" };
+  }
+
+  if (row.key === "repoFullName") {
+    const href = buildGitHubRepoUrl(row.value);
+    return href ? { href, target: "_blank" } : null;
+  }
+
+  return null;
+}
+
+function SupportSection({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="border-t border-light-300 pt-6 first:border-t-0 first:pt-0 dark:border-dark-300">
+      <h2 className="mb-4 text-base font-semibold text-light-1000 dark:text-dark-1000">
+        {title}
+      </h2>
+      {children}
+    </section>
+  );
+}
+
+function SupportTextBlock({ value }: { value: string }) {
+  return (
+    <div className="whitespace-pre-wrap break-words text-sm leading-7 text-light-950 dark:text-dark-950">
+      {value}
+    </div>
+  );
+}
+
+function SupportTicketDetails({ card }: { card: CardDetail }) {
+  const legacySummary = extractMarkdownSection(card.description, "Summary");
+  const legacyAgentReview = extractMarkdownSection(
+    card.description,
+    "Agent Review",
+  );
+  const legacySafeAnswer = extractMarkdownSection(
+    card.description,
+    "Safe User Answer",
+  );
+  const legacyDetails = extractMarkdownSection(card.description, "Details");
+  const legacyCustomerEmail = extractLegacyEmailBody(legacyDetails);
+  const legacyAgentNotes = [
+    legacyAgentReview,
+    legacySafeAnswer
+      ? `Safe user answer\n\n${legacySafeAnswer}`
+      : stripLegacyEmailBody(legacyDetails),
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  if (!legacyCustomerEmail && !legacyAgentNotes && !legacySummary) return null;
+
+  return (
+    <div className="mb-10 flex w-full max-w-2xl flex-col gap-8">
+      {legacyCustomerEmail && (
+        <SupportSection title="Customer emails">
+          <SupportTextBlock value={legacyCustomerEmail} />
+        </SupportSection>
+      )}
+
+      {legacyAgentNotes && (
+        <SupportSection title="Agent updates">
+          <SupportTextBlock value={legacyAgentNotes} />
+        </SupportSection>
+      )}
+
+      {legacySummary && (
+        <SupportSection title="Summary">
+          <SupportTextBlock value={legacySummary} />
+        </SupportSection>
+      )}
+    </div>
+  );
+}
+
+function SupportParametersPanel({ card }: { card: CardDetail }) {
+  const parameterRows = buildSupportParameterRows(card);
+  if (parameterRows.length === 0) return null;
+
+  return (
+    <div className="mt-6 border-t border-light-300 pt-5 dark:border-dark-300">
+      <p className="mb-3 text-sm font-semibold text-light-1000 dark:text-dark-1000">
+        Parameters
+      </p>
+      <dl className="space-y-2">
+        {parameterRows.map((row) => {
+          const link = getSupportRowLink(row, card.supportTicketMetadata);
+          const valueClass =
+            "block min-w-0 truncate text-xs font-medium leading-5 text-light-1000 dark:text-dark-1000";
+
+          return (
+            <div
+              key={`${row.key}:${row.label}`}
+              className="grid min-w-0 grid-cols-[96px_minmax(0,1fr)] gap-x-3"
+            >
+              <dt
+                className="truncate text-[11px] font-medium uppercase leading-5 tracking-normal text-light-800 dark:text-dark-800"
+                title={row.label}
+              >
+                {row.label}
+              </dt>
+              <dd className="min-w-0">
+                {link ? (
+                  <a
+                    href={link.href}
+                    target={link.target}
+                    rel={link.target === "_blank" ? "noreferrer" : undefined}
+                    className={`${valueClass} underline underline-offset-2 hover:text-light-900 dark:hover:text-dark-900`}
+                    title={row.value}
+                  >
+                    {row.value}
+                  </a>
+                ) : (
+                  <span className={valueClass} title={row.value}>
+                    {row.value}
+                  </span>
+                )}
+              </dd>
+            </div>
+          );
+        })}
+      </dl>
+    </div>
+  );
+}
+
+function getSupportParameterLink(
+  parameter: SupportParameter,
+  context: SupportContext,
+) {
+  const creatorUserId = context.byKey.userId;
+
+  switch (parameter.key) {
+    case "userId":
+      return {
+        href: buildAdminUrl(
+          `/user-activity/${encodeURIComponent(parameter.value)}`,
+        ),
+        target: "_top",
+      };
+    case "emmaUserId":
+      return {
+        href: creatorUserId
+          ? buildAdminUrl(`/user-activity/${encodeURIComponent(creatorUserId)}`)
+          : buildAdminUrl(
+              `/users?search=${encodeURIComponent(parameter.value)}`,
+            ),
+        target: "_top",
+      };
+    case "email":
+      return {
+        href: creatorUserId
+          ? buildAdminUrl(`/user-activity/${encodeURIComponent(creatorUserId)}`)
+          : buildAdminUrl(
+              `/users?search=${encodeURIComponent(parameter.value)}`,
+            ),
+        target: "_top",
+      };
+    case "ariSessionUrl":
+      return /^https?:\/\//i.test(parameter.value)
+        ? { href: parameter.value, target: "_blank" }
+        : null;
+    case "repoFullName": {
+      const href = buildGitHubRepoUrl(parameter.value);
+      return href ? { href, target: "_blank" } : null;
+    }
+    default:
+      return null;
+  }
+}
+
+function SupportContextRow({
+  parameter,
+  context,
+}: {
+  parameter: SupportParameter;
+  context: SupportContext;
+}) {
+  const link = getSupportParameterLink(parameter, context);
+  const valueClasses =
+    "min-w-0 flex-1 break-words text-xs font-medium leading-5 text-light-1000 dark:text-dark-1000";
+
+  return (
+    <div className="flex w-full flex-row gap-3">
+      <p className="w-[100px] shrink-0 text-xs font-medium leading-5 text-light-800 dark:text-dark-800">
+        {parameter.label}
+      </p>
+      {link ? (
+        <a
+          className={`${valueClasses} underline underline-offset-2 hover:text-light-900 dark:hover:text-dark-900`}
+          href={link.href}
+          target={link.target}
+          rel={link.target === "_blank" ? "noreferrer" : undefined}
+          title={parameter.value}
+        >
+          {parameter.value}
+        </a>
+      ) : (
+        <p className={valueClasses} title={parameter.value}>
+          {parameter.value}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function SupportContextPanel({
+  description,
+}: {
+  description: string | null | undefined;
+}) {
+  const context = parseRetrogradeSupportContext(description);
+  if (!context) return null;
+
+  return (
+    <div className="mt-6 border-t border-light-300 pt-5 dark:border-dark-300">
+      <p className="mb-3 text-sm font-semibold text-light-1000 dark:text-dark-1000">
+        Support context
+      </p>
+      <div className="space-y-3">
+        {context.parameters.map((parameter) => (
+          <SupportContextRow
+            key={parameter.key}
+            parameter={parameter}
+            context={context}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function CardRightPanel({ isTemplate }: { isTemplate?: boolean }) {
+  const router = useRouter();
+  const utils = api.useUtils();
+  const { canEditCard } = usePermissions();
+  const { showPopup } = usePopup();
+  const { data: session } = authClient.useSession();
+  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const cardId = Array.isArray(router.query.cardId)
+    ? router.query.cardId[0]
+    : router.query.cardId;
+
+  const { data: card } = api.card.byId.useQuery(
+    { cardPublicId: cardId ?? "" },
+    { enabled: !!cardId && cardId.length >= 12 },
+  );
+  const isRetrogradeSupportCard = Boolean(
+    card?.supportTicketMetadata ||
+    parseRetrogradeSupportContext(card?.description),
+  );
+  const { data: supersetProjects = [], isLoading: isLoadingProjects } =
+    api.superset.listProjects.useQuery(undefined, {
+      enabled: !isTemplate && !isRetrogradeSupportCard,
+      retry: false,
+    });
+  const launchAgent = api.superset.launchAgentFromCard.useMutation({
+    onSuccess: async (run) => {
+      if (cardId) await utils.card.byId.invalidate({ cardPublicId: cardId });
+
+      if (run.supersetUrl && typeof window !== "undefined") {
+        window.location.href = run.supersetUrl;
+      }
+
+      const agentName = run.agent === "ari-gold" ? "Ari Gold" : "Superset";
+      showPopup({
+        header: "Agent started",
+        message: run.supersetUrl
+          ? `${agentName} is working on this card.`
+          : `${agentName} accepted the task.`,
+        icon: "success",
+      });
+    },
+    onError: (error) => {
+      showPopup({
+        header: "Unable to start agent",
+        message: error.message,
+        icon: "error",
+      });
+    },
+  });
+
+  const isCreator = card?.createdBy && session?.user.id === card.createdBy;
+  const canEdit = canEditCard || isCreator;
+
+  const board = card?.list.board;
+  const labels = board?.labels;
+  const workspaceMembers = board?.workspace.members;
+  const selectedLabels = card?.labels;
+  const selectedMembers = card?.members;
+  const latestAgentRun = card?.agentRuns[0];
+  const agentIsRunning =
+    latestAgentRun?.status === "requested" ||
+    latestAgentRun?.status === "running";
+  const agentButtonLabel = agentIsRunning
+    ? "Agent running"
+    : latestAgentRun?.status === "ready_for_review"
+      ? "Ready for review"
+      : latestAgentRun?.status === "needs_input"
+        ? "Needs input"
+        : "Start agent";
+  const canLaunchAgent =
+    canEdit &&
+    Boolean(card) &&
+    (isRetrogradeSupportCard || Boolean(selectedProjectId)) &&
+    (isRetrogradeSupportCard || !isLoadingProjects) &&
+    !agentIsRunning &&
+    !launchAgent.isPending;
+
+  useEffect(() => {
+    if (!selectedProjectId && supersetProjects[0]) {
+      setSelectedProjectId(supersetProjects[0].id);
+    }
+  }, [selectedProjectId, supersetProjects]);
+
+  const formattedLabels =
+    labels?.map((label) => {
+      const isSelected = selectedLabels?.some(
+        (selectedLabel) => selectedLabel.publicId === label.publicId,
+      );
+
+      return {
+        key: label.publicId,
+        value: label.name,
+        selected: isSelected ?? false,
+        leftIcon: <LabelIcon colourCode={label.colourCode} />,
+      };
+    }) ?? [];
+
+  const formattedLists =
+    board?.lists.map((list) => ({
+      key: list.publicId,
+      value: list.name,
+      selected: list.publicId === card?.list.publicId,
+    })) ?? [];
+
+  const formattedMembers =
+    workspaceMembers?.map((member) => {
+      const isSelected = selectedMembers?.some(
+        (assignedMember) => assignedMember.publicId === member.publicId,
+      );
+
+      return {
+        key: member.publicId,
+        value: formatMemberDisplayName(
+          member.user?.name ?? null,
+          member.user?.email ?? member.email,
+        ),
+        imageUrl: member.user?.image
+          ? getAvatarUrl(member.user.image)
+          : undefined,
+        selected: isSelected ?? false,
+        leftIcon: (
+          <Avatar
+            size="xs"
+            name={member.user?.name ?? ""}
+            imageUrl={
+              member.user?.image ? getAvatarUrl(member.user.image) : undefined
+            }
+            email={member.user?.email ?? member.email}
+          />
+        ),
+      };
+    }) ?? [];
+
+  return (
+    <div className="h-full w-[360px] border-l-[1px] border-light-300 bg-light-50 p-8 text-light-900 dark:border-dark-300 dark:bg-dark-50 dark:text-dark-900">
+      {!isTemplate && board?.publicId && (
+        <Link
+          href={{
+            pathname: `/boards/${board.publicId}`,
+            query: {
+              view: "list",
+              sortBy: "updatedAt",
+              sortDirection: "desc",
+            },
+          }}
+          className="mb-4 inline-flex w-full items-center justify-center gap-2 rounded-md border border-light-300 bg-white px-3 py-2 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-light-100 dark:border-dark-400 dark:bg-dark-200 dark:text-dark-1000 dark:hover:bg-dark-300"
+        >
+          <HiOutlineClock className="h-4 w-4" />
+          {t`Time view`}
+        </Link>
+      )}
+      <div className="mb-4 flex w-full flex-row pt-[18px]">
+        <p className="my-2 mb-2 w-[100px] text-sm font-medium">{t`List`}</p>
+        <ListSelector
+          cardPublicId={cardId ?? ""}
+          lists={formattedLists}
+          isLoading={!card}
+          disabled={!canEdit}
+        />
+      </div>
+      <div className="mb-4 flex w-full flex-row">
+        <p className="my-2 mb-2 w-[100px] text-sm font-medium">{t`Labels`}</p>
+        <LabelSelector
+          cardPublicId={cardId ?? ""}
+          labels={formattedLabels}
+          isLoading={!card}
+          disabled={!canEdit}
+        />
+      </div>
+      {!isTemplate && (
+        <div className="mb-4 flex w-full flex-row">
+          <p className="my-2 mb-2 w-[100px] text-sm font-medium">{t`Members`}</p>
+          <MemberSelector
+            cardPublicId={cardId ?? ""}
+            members={formattedMembers}
+            isLoading={!card}
+            disabled={!canEdit}
+          />
+        </div>
+      )}
+      <div className="mb-4 flex w-full flex-row">
+        <p className="my-2 mb-2 w-[100px] text-sm font-medium">{t`Due date`}</p>
+        <DueDateSelector
+          cardPublicId={cardId ?? ""}
+          dueDate={card?.dueDate}
+          isLoading={!card}
+          disabled={!canEdit}
+        />
+      </div>
+      {!isTemplate && !isRetrogradeSupportCard && (
+        <div className="mb-4 flex w-full flex-row">
+          <p className="my-2 mb-2 w-[100px] text-sm font-medium">Project</p>
+          <div className="min-w-0 flex-1">
+            <select
+              value={selectedProjectId}
+              disabled={!canEdit || isLoadingProjects}
+              onChange={(event) => setSelectedProjectId(event.target.value)}
+              className="h-9 w-full rounded-md border border-light-600 bg-light-50 px-2.5 text-sm font-medium text-light-1000 shadow-sm disabled:cursor-not-allowed disabled:opacity-60 dark:border-dark-600 dark:bg-dark-300 dark:text-dark-1000"
+            >
+              {isLoadingProjects ? (
+                <option value="">Loading projects...</option>
+              ) : supersetProjects.length ? (
+                supersetProjects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                    {project.defaultBranch ? ` (${project.defaultBranch})` : ""}
+                  </option>
+                ))
+              ) : (
+                <option value="">No projects found</option>
+              )}
+            </select>
+          </div>
+        </div>
+      )}
+      {!isTemplate && (
+        <div className="mb-4 flex w-full flex-row">
+          <p className="my-2 mb-2 w-[100px] text-sm font-medium">Agent</p>
+          <div className="min-w-0 flex-1">
+            <Button
+              type="button"
+              variant={agentIsRunning ? "primary" : "secondary"}
+              iconLeft={<HiOutlineCommandLine />}
+              disabled={!canLaunchAgent}
+              isLoading={launchAgent.isPending}
+              onClick={() => {
+                if (
+                  !cardId ||
+                  (!isRetrogradeSupportCard && !selectedProjectId)
+                ) {
+                  return;
+                }
+                launchAgent.mutate({
+                  cardPublicId: cardId,
+                  projectId: isRetrogradeSupportCard
+                    ? undefined
+                    : selectedProjectId,
+                });
+              }}
+              fullWidth
+            >
+              {agentButtonLabel}
+            </Button>
+            {latestAgentRun && (
+              <div className="mt-2 text-xs text-light-800 dark:text-dark-800">
+                {latestAgentRun.status === "failed" && latestAgentRun.error ? (
+                  <p>{latestAgentRun.error}</p>
+                ) : latestAgentRun.supersetUrl ? (
+                  <a
+                    className="font-medium underline underline-offset-2"
+                    href={latestAgentRun.supersetUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Open agent run
+                  </a>
+                ) : (
+                  <p>{latestAgentRun.agent}</p>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      {!isTemplate && !isRetrogradeSupportCard && (
+        <SupportContextPanel description={card?.description} />
+      )}
+      {!isTemplate && isRetrogradeSupportCard && card && (
+        <SupportParametersPanel card={card} />
+      )}
+    </div>
+  );
+}
+
+export default function CardPage({ isTemplate }: { isTemplate?: boolean }) {
+  const router = useRouter();
+  const utils = api.useUtils();
+  const {
+    modalContentType,
+    entityId,
+    getModalState,
+    clearModalState,
+    isOpen,
+    modalStates,
+  } = useModal();
+  const { showPopup } = usePopup();
+  const { workspace } = useWorkspace();
+  const { canEditCard } = usePermissions();
+  const { data: session } = authClient.useSession();
+  const [activeChecklistForm, setActiveChecklistForm] = useState<string | null>(
+    null,
+  );
+
+  const cardId = Array.isArray(router.query.cardId)
+    ? router.query.cardId[0]
+    : router.query.cardId;
+
+  const {
+    data: card,
+    isLoading,
+    error,
+  } = api.card.byId.useQuery(
+    { cardPublicId: cardId ?? "" },
+    { enabled: !!cardId && cardId.length >= 12 },
+  );
+
+  // Redirect to 404 if card doesn't exist
+  useEffect(() => {
+    if (router.isReady && cardId && !isLoading) {
+      if (error?.data?.code === "NOT_FOUND" || (!card && !isLoading)) {
+        router.replace("/404");
+      }
+    }
+  }, [router, cardId, isLoading, error, card]);
+
+  const isCreator = card?.createdBy && session?.user.id === card.createdBy;
+  const canEdit = canEditCard || isCreator;
+  const isRetrogradeSupportCard = Boolean(
+    card?.supportTicketMetadata ||
+    parseRetrogradeSupportContext(card?.description),
+  );
+
+  const refetchCard = async () => {
+    if (cardId) await utils.card.byId.refetch({ cardPublicId: cardId });
+  };
+
+  const board = card?.list.board;
+  const workspaceMembers = board?.workspace.members;
+  const boardId = board?.publicId;
+
+  const editorWorkspaceMembers =
+    workspaceMembers
+      ?.filter((member) => member.email)
+      .map((member) => ({
+        publicId: member.publicId,
+        email: member.email,
+        user: member.user
+          ? {
+              id: member.user.id,
+              name: member.user.name ?? null,
+              image: member.user.image ?? null,
+            }
+          : null,
+      })) ?? [];
+
+  const updateCard = api.card.update.useMutation({
+    onError: () => {
+      showPopup({
+        header: t`Unable to update card`,
+        message: t`Please try again later, or contact customer support.`,
+        icon: "error",
+      });
+    },
+    onSettled: async () => {
+      if (cardId) await invalidateCard(utils, cardId);
+    },
+  });
+
+  const addOrRemoveLabel = api.card.addOrRemoveLabel.useMutation({
+    onError: () => {
+      showPopup({
+        header: t`Unable to add label`,
+        message: t`Please try again later, or contact customer support.`,
+        icon: "error",
+      });
+    },
+    onSettled: async () => {
+      if (cardId) {
+        await utils.card.byId.invalidate({ cardPublicId: cardId });
+      }
+    },
+  });
+
+  const { register, handleSubmit, setValue, watch } = useForm<FormValues>({
+    values: {
+      cardId: cardId ?? "",
+      title: card?.title ?? "",
+      description: card?.description ?? "",
+    },
+  });
+
+  const onSubmit = (values: FormValues) => {
+    updateCard.mutate({
+      cardPublicId: values.cardId,
+      title: values.title,
+      description: values.description,
+    });
+  };
+
+  // this adds the new created label to selected labels
+  useEffect(() => {
+    const newLabelId = modalStates.NEW_LABEL_CREATED;
+    if (newLabelId && cardId) {
+      const isAlreadyAdded = card?.labels.some(
+        (label) => label.publicId === newLabelId,
+      );
+
+      if (!isAlreadyAdded) {
+        addOrRemoveLabel.mutate({
+          cardPublicId: cardId,
+          labelPublicId: newLabelId,
+        });
+      }
+      clearModalState("NEW_LABEL_CREATED");
+    }
+  }, [modalStates.NEW_LABEL_CREATED, card, cardId]);
+
+  // Open the new item form after creating a new checklist
+  useEffect(() => {
+    if (!card) return;
+    const state = getModalState("ADD_CHECKLIST");
+    const createdId: string | undefined = state?.createdChecklistId;
+    if (createdId) {
+      setActiveChecklistForm(createdId);
+      clearModalState("ADD_CHECKLIST");
+    }
+  }, [card, getModalState, clearModalState]);
+
+  // Auto-resize title textarea
+  useEffect(() => {
+    const titleTextarea = document.getElementById(
+      "title",
+    ) as HTMLTextAreaElement;
+    if (titleTextarea) {
+      titleTextarea.style.height = "auto";
+      titleTextarea.style.height = `${titleTextarea.scrollHeight}px`;
+    }
+  }, [card]);
+
+  if (!cardId) return <></>;
+
+  return (
+    <>
+      <PageHead
+        title={t`${card?.title ?? t`Card`} | ${board?.name ?? t`Board`}`}
+      />
+      <div className="flex h-full flex-1 flex-col overflow-hidden">
+        {/* Full-width top strip with board link and dropdown */}
+        <div className="flex w-full items-center justify-between border-b-[1px] border-light-300 bg-light-50 px-8 py-2 dark:border-dark-300 dark:bg-dark-50">
+          {!card && isLoading && (
+            <div className="flex space-x-2">
+              <div className="h-[1.5rem] w-[150px] animate-pulse rounded-[5px] bg-light-300 dark:bg-dark-300" />
+            </div>
+          )}
+          {card && (
+            <>
+              <div className="flex items-center gap-1">
+                <Link
+                  className="whitespace-nowrapleading-[1.5rem] text-sm font-bold text-light-900 dark:text-dark-950"
+                  href={`${isTemplate ? "/templates" : "/boards"}`}
+                >
+                  {workspace.name}
+                </Link>
+                <IoChevronForwardSharp className="h-[10px] w-[10px] text-light-900 dark:text-dark-900" />
+                <Link
+                  className="whitespace-nowrap text-sm font-bold leading-[1.5rem] text-light-900 dark:text-dark-950"
+                  href={`${isTemplate ? "/templates" : "/boards"}/${board?.publicId}`}
+                >
+                  {board?.name}
+                </Link>
+                {card.cardNumber != null &&
+                  card.list.board.workspace.cardPrefix && (
+                    <>
+                      <IoChevronForwardSharp className="h-[10px] w-[10px] text-light-900 dark:text-dark-900" />
+                      <span className="whitespace-nowrap text-sm font-bold leading-[1.5rem] text-light-700 dark:text-dark-800">
+                        {card.list.board.workspace.cardPrefix}-{card.cardNumber}
+                      </span>
+                    </>
+                  )}
+              </div>
+              <div className="flex items-center gap-2">
+                <Dropdown
+                  cardPublicId={cardId}
+                  isTemplate={isTemplate}
+                  boardPublicId={boardId}
+                  cardCreatedBy={card?.createdBy}
+                  ticketNumber={
+                    card.cardNumber != null &&
+                    card.list.board.workspace.cardPrefix
+                      ? `${card.list.board.workspace.cardPrefix}-${card.cardNumber}`
+                      : null
+                  }
+                />
+                <Link
+                  href={`/${isTemplate ? "templates" : "boards"}/${boardId}`}
+                  className="flex h-7 w-7 items-center justify-center rounded-[5px] text-light-900 hover:bg-light-200 dark:text-dark-900 dark:hover:bg-dark-200"
+                  aria-label={t`Close`}
+                >
+                  <HiXMark className="h-4 w-4" />
+                </Link>
+              </div>
+            </>
+          )}
+          {!card && !isLoading && (
+            <p className="block p-0 py-0 font-bold leading-[1.5rem] tracking-tight text-light-900 dark:text-dark-900 sm:text-[1rem]">
+              {t`Card not found`}
+            </p>
+          )}
+        </div>
+        <div className="scrollbar-thumb-rounded-[4px] scrollbar-track-rounded-[4px] w-full flex-1 overflow-y-auto scrollbar scrollbar-track-light-200 scrollbar-thumb-light-400 hover:scrollbar-thumb-light-400 dark:scrollbar-track-dark-100 dark:scrollbar-thumb-dark-300 dark:hover:scrollbar-thumb-dark-300">
+          <div className="p-auto mx-auto flex h-full w-full max-w-[800px] flex-col">
+            <div className="p-6 md:p-8">
+              <div className="mb-8 md:mt-4">
+                {!card && isLoading && (
+                  <div className="flex space-x-2">
+                    <div className="h-[2.3rem] w-[300px] animate-pulse rounded-[5px] bg-light-300 dark:bg-dark-300" />
+                  </div>
+                )}
+                {card && (
+                  <form
+                    onSubmit={handleSubmit(onSubmit)}
+                    className="w-full space-y-6"
+                  >
+                    <div>
+                      <textarea
+                        id="title"
+                        {...register("title")}
+                        onBlur={canEdit ? handleSubmit(onSubmit) : undefined}
+                        rows={1}
+                        disabled={!canEdit}
+                        className={`block w-full resize-none overflow-hidden border-0 bg-transparent p-0 py-0 font-bold leading-relaxed text-neutral-900 focus:ring-0 dark:text-dark-1000 sm:text-[1.2rem] ${!canEdit ? "cursor-default" : ""}`}
+                        onInput={(e) => {
+                          const target = e.target as HTMLTextAreaElement;
+                          target.style.height = "auto";
+                          target.style.height = `${target.scrollHeight}px`;
+                        }}
+                      />
+                    </div>
+                  </form>
+                )}
+                {!card && !isLoading && (
+                  <p className="block p-0 py-0 font-bold leading-[2.3rem] tracking-tight text-neutral-900 dark:text-dark-1000 sm:text-[1.2rem]">
+                    {t`Card not found`}
+                  </p>
+                )}
+              </div>
+              {card && (
+                <>
+                  {isRetrogradeSupportCard ? (
+                    <SupportTicketDetails card={card} />
+                  ) : (
+                    <div className="mb-10 flex w-full max-w-2xl flex-col justify-between">
+                      <form
+                        onSubmit={handleSubmit(onSubmit)}
+                        className="w-full space-y-6"
+                      >
+                        <div className="mt-2">
+                          <Editor
+                            content={card.description}
+                            onChange={
+                              canEdit
+                                ? (e) => setValue("description", e)
+                                : undefined
+                            }
+                            onBlur={
+                              canEdit
+                                ? () => handleSubmit(onSubmit)()
+                                : undefined
+                            }
+                            workspaceMembers={workspaceMembers ?? []}
+                            readOnly={!canEdit}
+                          />
+                        </div>
+                      </form>
+                    </div>
+                  )}
+                  <Checklists
+                    checklists={card.checklists}
+                    cardPublicId={cardId}
+                    activeChecklistForm={activeChecklistForm}
+                    setActiveChecklistForm={setActiveChecklistForm}
+                    viewOnly={!canEdit}
+                  />
+                  {!isTemplate && (
+                    <>
+                      {card?.attachments.length > 0 && (
+                        <div className="mt-6">
+                          <AttachmentThumbnails
+                            attachments={card.attachments}
+                            cardPublicId={cardId ?? ""}
+                            isReadOnly={!canEdit}
+                          />
+                        </div>
+                      )}
+                      {canEdit && (
+                        <div className="mt-6">
+                          <AttachmentUpload cardPublicId={cardId} />
+                        </div>
+                      )}
+                    </>
+                  )}
+                  <div className="border-t-[1px] border-light-300 pt-12 dark:border-dark-300">
+                    <h2 className="text-md pb-4 font-medium text-light-1000 dark:text-dark-1000">
+                      {t`Activity`}
+                    </h2>
+                    <div>
+                      <ActivityList
+                        cardPublicId={cardId}
+                        isLoading={!card}
+                        isAdmin={workspace.role === "admin"}
+                      />
+                    </div>
+                    {!isTemplate && (
+                      <div className="mt-6">
+                        <NewCommentForm
+                          cardPublicId={cardId}
+                          workspaceMembers={editorWorkspaceMembers}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <>
+          <Modal
+            modalSize="md"
+            isVisible={isOpen && modalContentType === "NEW_FEEDBACK"}
+          >
+            <FeedbackModal />
+          </Modal>
+
+          <Modal
+            modalSize="sm"
+            isVisible={isOpen && modalContentType === "NEW_LABEL"}
+          >
+            <LabelForm boardPublicId={boardId ?? ""} refetch={refetchCard} />
+          </Modal>
+
+          <Modal
+            modalSize="sm"
+            isVisible={isOpen && modalContentType === "EDIT_LABEL"}
+          >
+            <LabelForm
+              boardPublicId={boardId ?? ""}
+              refetch={refetchCard}
+              isEdit
+            />
+          </Modal>
+
+          <Modal
+            modalSize="sm"
+            isVisible={isOpen && modalContentType === "DELETE_LABEL"}
+          >
+            <DeleteLabelConfirmation
+              refetch={refetchCard}
+              labelPublicId={entityId}
+            />
+          </Modal>
+
+          <Modal
+            modalSize="sm"
+            isVisible={isOpen && modalContentType === "DELETE_CARD"}
+          >
+            <DeleteCardConfirmation
+              boardPublicId={boardId ?? ""}
+              cardPublicId={cardId}
+            />
+          </Modal>
+
+          <Modal
+            modalSize="sm"
+            isVisible={isOpen && modalContentType === "DELETE_COMMENT"}
+          >
+            <DeleteCommentConfirmation
+              cardPublicId={cardId}
+              commentPublicId={entityId}
+            />
+          </Modal>
+
+          <Modal
+            modalSize="sm"
+            isVisible={isOpen && modalContentType === "NEW_WORKSPACE"}
+          >
+            <NewWorkspaceForm />
+          </Modal>
+
+          <Modal
+            modalSize="sm"
+            isVisible={isOpen && modalContentType === "ADD_CHECKLIST"}
+          >
+            <NewChecklistForm cardPublicId={cardId} />
+          </Modal>
+
+          <Modal
+            modalSize="sm"
+            isVisible={isOpen && modalContentType === "DELETE_CHECKLIST"}
+          >
+            <DeleteChecklistConfirmation
+              cardPublicId={cardId}
+              checklistPublicId={entityId}
+            />
+          </Modal>
+
+          <Modal
+            modalSize="sm"
+            isVisible={isOpen && modalContentType === "EDIT_YOUTUBE"}
+          >
+            <EditYouTubeModal />
+          </Modal>
+        </>
+      </div>
+    </>
+  );
+}

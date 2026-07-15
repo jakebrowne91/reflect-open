@@ -1,0 +1,563 @@
+import { TRPCError } from "@trpc/server";
+import { env } from "next-runtime-env";
+import { z } from "zod";
+
+import * as workspaceRepo from "@kan/db/repository/workspace.repo";
+import * as workspaceSlugRepo from "@kan/db/repository/workspaceSlug.repo";
+import { generateAvatarUrl, generateUID } from "@kan/shared/utils";
+
+import {
+  workspaceCreateResponseSchema,
+  workspaceDeleteResponseSchema,
+  workspaceDetailSchema,
+  workspaceListItemSchema,
+  workspaceUpdateResponseSchema,
+  workspaceWithBoardsSchema,
+} from "../schemas";
+import { createTRPCRouter, protectedProcedure, publicProcedure } from "../trpc";
+import { assertPermission } from "../utils/permissions";
+
+export const workspaceRouter = createTRPCRouter({
+  all: protectedProcedure
+    .meta({
+      openapi: {
+        summary: "Get all workspaces",
+        method: "GET",
+        path: "/workspaces",
+        description: "Retrieves all workspaces for the authenticated user",
+        tags: ["Workspaces"],
+        protect: true,
+      },
+    })
+    .input(z.void())
+    .output(z.array(workspaceListItemSchema))
+    .query(async ({ ctx }) => {
+      const userId = ctx.user?.id;
+
+      if (!userId)
+        throw new TRPCError({
+          message: `User not authenticated`,
+          code: "UNAUTHORIZED",
+        });
+
+      const result = await workspaceRepo.getAllByUserId(ctx.db, userId);
+
+      return result;
+    }),
+  byId: protectedProcedure
+    .meta({
+      openapi: {
+        summary: "Get a workspace by public ID",
+        method: "GET",
+        path: "/workspaces/{workspacePublicId}",
+        description: "Retrieves a workspace by its public ID",
+        tags: ["Workspaces"],
+        protect: true,
+      },
+    })
+    .input(z.object({ workspacePublicId: z.string().min(12) }))
+    .output(workspaceDetailSchema)
+    .query(async ({ ctx, input }) => {
+      const userId = ctx.user?.id;
+
+      if (!userId)
+        throw new TRPCError({
+          message: `User not authenticated`,
+          code: "UNAUTHORIZED",
+        });
+
+      const result = await workspaceRepo.getByPublicIdWithMembers(
+        ctx.db,
+        input.workspacePublicId,
+      );
+
+      if (!result)
+        throw new TRPCError({
+          message: `Workspace not found`,
+          code: "NOT_FOUND",
+        });
+      await assertPermission(ctx.db, userId, result.id, "workspace:view");
+
+      // Check if user is an admin
+      const userMember = result.members.find(
+        (member) => member.user?.id === userId,
+      );
+      const isAdmin = userMember?.role === "admin";
+
+      // Show emails if user is admin OR workspace setting allows it
+      const shouldShowEmails = isAdmin || result.showEmailsToMembers === true;
+
+      // Generate presigned URLs for member avatars
+      const membersWithAvatarUrls = await Promise.all(
+        result.members.map(async (member) => {
+          if (!member.user?.image) {
+            return member;
+          }
+
+          const avatarUrl = await generateAvatarUrl(member.user.image);
+          return {
+            ...member,
+            user: {
+              ...member.user,
+              image: avatarUrl,
+            },
+          };
+        }),
+      );
+
+      // If emails should be hidden, filter them out
+      if (!shouldShowEmails) {
+        const sanitizedMembers = membersWithAvatarUrls.map((member) => {
+          // If user doesn't have a display name, use anonymous identifier
+          const displayName =
+            member.user?.name?.trim() ?? `anonymous_${member.publicId}`;
+
+          const { email: _memberEmail, ...memberWithoutEmail } = member;
+          const sanitizedUser = member.user
+            ? (() => {
+                const { email: _userEmail, ...userWithoutEmail } = member.user;
+                return {
+                  ...userWithoutEmail,
+                  name: displayName,
+                };
+              })()
+            : {
+                id: null,
+                name: displayName,
+                image: null,
+              };
+
+          return {
+            ...memberWithoutEmail,
+            user: sanitizedUser,
+          };
+        });
+
+        return {
+          ...result,
+          members: sanitizedMembers,
+        };
+      }
+
+      return {
+        ...result,
+        members: membersWithAvatarUrls,
+      };
+    }),
+  bySlug: publicProcedure
+    .meta({
+      openapi: {
+        summary: "Get a workspace by slug",
+        method: "GET",
+        path: "/workspaces/{workspaceSlug}",
+        description: "Retrieves a workspace by its slug",
+        tags: ["Workspaces"],
+        protect: false,
+      },
+    })
+    .input(
+      z.object({
+        workspaceSlug: z
+          .string()
+          .min(3)
+          .max(64)
+          .regex(/^(?![-]+$)[a-zA-Z0-9-]+$/),
+      }),
+    )
+    .output(workspaceWithBoardsSchema)
+    .query(async ({ ctx, input }) => {
+      const userId = ctx.user?.id;
+
+      if (!userId)
+        throw new TRPCError({
+          message: `User not authenticated`,
+          code: "UNAUTHORIZED",
+        });
+
+      const result = await workspaceRepo.getBySlugWithBoards(
+        ctx.db,
+        input.workspaceSlug,
+      );
+
+      if (!result)
+        throw new TRPCError({
+          message: `Workspace not found`,
+          code: "NOT_FOUND",
+        });
+      await assertPermission(ctx.db, userId, result.id, "workspace:view");
+
+      return result;
+    }),
+  create: protectedProcedure
+    .meta({
+      openapi: {
+        summary: "Create a workspace",
+        method: "POST",
+        path: "/workspaces",
+        description: "Creates a new workspace",
+        tags: ["Workspaces"],
+        protect: true,
+      },
+    })
+    .input(
+      z.object({
+        name: z.string().min(1).max(64),
+        description: z.string().max(280).optional(),
+        slug: z.preprocess(
+          (value) => (value === "" ? undefined : value),
+          z
+            .string()
+            .min(3)
+            .max(64)
+            .regex(/^(?![-]+$)[a-zA-Z0-9-]+$/)
+            .optional(),
+        ),
+      }),
+    )
+    .output(workspaceCreateResponseSchema)
+    .mutation(async ({ ctx, input }) => {
+      const userId = ctx.user?.id;
+      const userEmail = ctx.user?.email;
+
+      if (!userId || !userEmail)
+        throw new TRPCError({
+          message: `User not authenticated`,
+          code: "UNAUTHORIZED",
+        });
+
+      // Check if slug is provided in cloud environment
+      if (input.slug && env("NEXT_PUBLIC_KAN_ENV") === "cloud") {
+        throw new TRPCError({
+          message: "Custom URLs are only available for Pro workspaces",
+          code: "BAD_REQUEST",
+        });
+      }
+
+      const workspacePublicId = generateUID();
+      const workspaceSlug = input.slug ?? workspacePublicId;
+
+      if (input.slug) {
+        const reservedOrPremiumWorkspaceSlug =
+          await workspaceSlugRepo.getWorkspaceSlug(ctx.db, input.slug);
+
+        const isWorkspaceSlugAvailable =
+          await workspaceRepo.isWorkspaceSlugAvailable(ctx.db, input.slug);
+
+        if (reservedOrPremiumWorkspaceSlug) {
+          throw new TRPCError({
+            message: `Workspace slug '${input.slug}' is reserved or premium`,
+            code: "BAD_REQUEST",
+          });
+        }
+
+        if (!isWorkspaceSlugAvailable) {
+          throw new TRPCError({
+            message: `Workspace slug '${input.slug}' is already taken`,
+            code: "BAD_REQUEST",
+          });
+        }
+      }
+
+      const result = await workspaceRepo.create(ctx.db, {
+        publicId: workspacePublicId,
+        name: input.name,
+        slug: workspaceSlug,
+        createdBy: userId,
+        createdByEmail: userEmail,
+        ...(input.description && { description: input.description }),
+      });
+
+      if (!result.publicId)
+        throw new TRPCError({
+          message: `Unable to create workspace`,
+          code: "INTERNAL_SERVER_ERROR",
+        });
+
+      return {
+        publicId: result.publicId,
+        name: result.name ?? input.name,
+        slug: result.slug ?? workspaceSlug,
+        description: result.description ?? null,
+        plan: result.plan ?? "free",
+        cardPrefix: result.cardPrefix ?? "",
+      };
+    }),
+  update: protectedProcedure
+    .meta({
+      openapi: {
+        summary: "Update a workspace",
+        method: "PUT",
+        path: "/workspaces/{workspacePublicId}",
+        description: "Updates a workspace by its public ID",
+        tags: ["Workspaces"],
+        protect: true,
+      },
+    })
+    .input(
+      z.object({
+        workspacePublicId: z.string().min(12),
+        name: z.string().min(3).max(64).optional(),
+        slug: z
+          .string()
+          .min(3)
+          .max(64)
+          .regex(/^(?![-]+$)[a-zA-Z0-9-]+$/)
+          .optional(),
+        description: z.string().min(3).max(280).optional(),
+        showEmailsToMembers: z.boolean().optional(),
+        weekStartDay: z
+          .union([z.literal(0), z.literal(1), z.literal(6)])
+          .optional(),
+      }),
+    )
+    .output(workspaceUpdateResponseSchema)
+    .mutation(async ({ ctx, input }) => {
+      const userId = ctx.user?.id;
+
+      if (!userId)
+        throw new TRPCError({
+          message: `User not authenticated`,
+          code: "UNAUTHORIZED",
+        });
+
+      const workspace = await workspaceRepo.getByPublicId(
+        ctx.db,
+        input.workspacePublicId,
+      );
+
+      if (!workspace)
+        throw new TRPCError({
+          message: `Workspace not found`,
+          code: "NOT_FOUND",
+        });
+      await assertPermission(ctx.db, userId, workspace.id, "workspace:edit");
+
+      if (input.slug) {
+        const reservedOrPremiumWorkspaceSlug =
+          await workspaceSlugRepo.getWorkspaceSlug(ctx.db, input.slug);
+
+        const isWorkspaceSlugAvailable =
+          await workspaceRepo.isWorkspaceSlugAvailable(ctx.db, input.slug);
+
+        if (
+          env("NEXT_PUBLIC_KAN_ENV") === "cloud" &&
+          workspace.plan !== "pro" &&
+          input.slug !== workspace.publicId
+        ) {
+          throw new TRPCError({
+            message: `Workspace slug cannot be changed in cloud without upgrading to a paid plan`,
+            code: "FORBIDDEN",
+          });
+        }
+
+        if (
+          reservedOrPremiumWorkspaceSlug?.type === "reserved" ||
+          !isWorkspaceSlugAvailable
+        ) {
+          throw new TRPCError({
+            message: `Workspace slug already taken`,
+            code: "CONFLICT",
+          });
+        }
+      }
+
+      const result = await workspaceRepo.update(
+        ctx.db,
+        input.workspacePublicId,
+        {
+          name: input.name,
+          slug: input.slug,
+          description: input.description,
+          showEmailsToMembers: input.showEmailsToMembers,
+          weekStartDay: input.weekStartDay,
+        },
+      );
+
+      if (!result)
+        throw new TRPCError({
+          message: `Unable to delete workspace`,
+          code: "INTERNAL_SERVER_ERROR",
+        });
+
+      return result;
+    }),
+  delete: protectedProcedure
+    .meta({
+      openapi: {
+        summary: "Delete a workspace",
+        method: "DELETE",
+        path: "/workspaces/{workspacePublicId}",
+        description: "Deletes a workspace by its public ID",
+        tags: ["Workspaces"],
+        protect: true,
+      },
+    })
+    .input(z.object({ workspacePublicId: z.string().min(12) }))
+    .output(workspaceDeleteResponseSchema)
+    .mutation(async ({ ctx, input }) => {
+      const userId = ctx.user?.id;
+
+      if (!userId)
+        throw new TRPCError({
+          message: `User not authenticated`,
+          code: "UNAUTHORIZED",
+        });
+
+      const workspace = await workspaceRepo.getByPublicId(
+        ctx.db,
+        input.workspacePublicId,
+      );
+
+      if (!workspace)
+        throw new TRPCError({
+          message: `Workspace not found`,
+          code: "NOT_FOUND",
+        });
+      await assertPermission(ctx.db, userId, workspace.id, "workspace:delete");
+
+      await workspaceRepo.hardDelete(ctx.db, input.workspacePublicId);
+
+      return { success: true };
+    }),
+  checkSlugAvailability: publicProcedure
+    .meta({
+      openapi: {
+        summary: "Check if a workspace slug is available",
+        method: "GET",
+        path: "/workspaces/check-slug-availability",
+        description: "Checks if a workspace slug is available",
+        tags: ["Workspaces"],
+        protect: true,
+      },
+    })
+    .input(
+      z.object({
+        workspaceSlug: z
+          .string()
+          .min(3)
+          .max(64)
+          .regex(/^(?![-]+$)[a-zA-Z0-9-]+$/),
+      }),
+    )
+    .output(
+      z.object({
+        isAvailable: z.boolean(),
+        isReserved: z.boolean(),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      const userId = ctx.user?.id;
+
+      if (!userId)
+        throw new TRPCError({
+          message: `User not authenticated`,
+          code: "UNAUTHORIZED",
+        });
+
+      const slug = input.workspaceSlug.toLowerCase();
+      // check slug is not reserved
+      const workspaceSlug = await workspaceSlugRepo.getWorkspaceSlug(
+        ctx.db,
+        slug,
+      );
+
+      // check slug is not taken already
+      const isWorkspaceSlugAvailable =
+        await workspaceRepo.isWorkspaceSlugAvailable(ctx.db, slug);
+
+      const isAvailable =
+        isWorkspaceSlugAvailable && workspaceSlug?.type !== "reserved";
+      const isReserved = workspaceSlug?.type === "reserved";
+
+      if (env("NEXT_PUBLIC_KAN_ENV") === "cloud") {
+        await workspaceSlugRepo.createWorkspaceSlugCheck(ctx.db, {
+          slug,
+          userId,
+          available: isAvailable,
+          reserved: isReserved,
+        });
+      }
+
+      return {
+        isAvailable:
+          isWorkspaceSlugAvailable && workspaceSlug?.type !== "reserved",
+        isReserved: workspaceSlug?.type === "reserved",
+      };
+    }),
+  search: protectedProcedure
+    .meta({
+      openapi: {
+        summary: "Search boards and cards in a workspace",
+        method: "GET",
+        path: "/workspaces/{workspacePublicId}/search",
+        description:
+          "Searches for boards and cards by title within a workspace",
+        tags: ["Workspaces"],
+        protect: true,
+      },
+    })
+    .input(
+      z.object({
+        workspacePublicId: z.string().min(12),
+        query: z.string().min(1).max(100),
+        limit: z.number().min(1).max(50).optional().default(20),
+      }),
+    )
+    .output(
+      z.array(
+        z.discriminatedUnion("type", [
+          z.object({
+            publicId: z.string(),
+            title: z.string(),
+            description: z.string().nullable(),
+            slug: z.string(),
+            updatedAt: z.date().nullable(),
+            createdAt: z.date(),
+            type: z.literal("board"),
+          }),
+          z.object({
+            publicId: z.string(),
+            title: z.string(),
+            description: z.string().nullable(),
+            boardPublicId: z.string(),
+            boardName: z.string(),
+            listName: z.string(),
+            cardNumber: z.number().nullable(),
+            updatedAt: z.date().nullable(),
+            createdAt: z.date(),
+            type: z.literal("card"),
+          }),
+        ]),
+      ),
+    )
+    .query(async ({ ctx, input }) => {
+      const userId = ctx.user?.id;
+
+      if (!userId)
+        throw new TRPCError({
+          message: `User not authenticated`,
+          code: "UNAUTHORIZED",
+        });
+
+      const workspace = await workspaceRepo.getByPublicId(
+        ctx.db,
+        input.workspacePublicId,
+      );
+
+      if (!workspace)
+        throw new TRPCError({
+          message: `Workspace not found`,
+          code: "NOT_FOUND",
+        });
+      await assertPermission(ctx.db, userId, workspace.id, "workspace:view");
+
+      const result = await workspaceRepo.searchBoardsAndCards(
+        ctx.db,
+        workspace.id,
+        input.query,
+        input.limit,
+      );
+
+      return result;
+    }),
+});

@@ -1,0 +1,1852 @@
+import type { DropResult } from "react-beautiful-dnd";
+import { useParams } from "next/navigation";
+import { useRouter } from "next/router";
+import { t } from "@lingui/core/macro";
+import { keepPreviousData } from "@tanstack/react-query";
+import { env } from "next-runtime-env";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { DragDropContext, Draggable } from "react-beautiful-dnd";
+import { useForm } from "react-hook-form";
+import {
+  HiMiniXMark,
+  HiOutlineArrowRightCircle,
+  HiOutlineClock,
+  HiOutlineFlag,
+  HiOutlinePencilSquare,
+  HiOutlinePlusSmall,
+  HiOutlineRectangleStack,
+  HiOutlineSquare3Stack3D,
+  HiOutlineTag,
+} from "react-icons/hi2";
+import { twMerge } from "tailwind-merge";
+
+import type { UpdateBoardInput } from "@kan/api/types";
+
+import type { BoardViewMode } from "./boardView";
+import type { BoardCardDisplayField } from "./cardDisplay";
+import type { CardPriority } from "./components/Card";
+import type { CardContextMenuAction } from "./components/CardContextMenu";
+import type {
+  BoardSortBy,
+  BoardSortCriterion,
+  BoardSortDirection,
+  BoardSortLevel,
+} from "./sort";
+import Button from "~/components/Button";
+import { DeleteLabelConfirmation } from "~/components/DeleteLabelConfirmation";
+import { LabelForm } from "~/components/LabelForm";
+import Modal from "~/components/modal";
+import { NewWorkspaceForm } from "~/components/NewWorkspaceForm";
+import { PageHead } from "~/components/PageHead";
+import PatternedBackground from "~/components/PatternedBackground";
+import { StrictModeDroppable as Droppable } from "~/components/StrictModeDroppable";
+import { Tooltip } from "~/components/Tooltip";
+import { EditYouTubeModal } from "~/components/YouTubeEmbed/EditYouTubeModal";
+import { useDragToScroll } from "~/hooks/useDragToScroll";
+import { usePermissions } from "~/hooks/usePermissions";
+import { useScrollRestore } from "~/hooks/useScrollRestore";
+import { useModal } from "~/providers/modal";
+import { usePopup } from "~/providers/popup";
+import { useWorkspace } from "~/providers/workspace";
+import { api } from "~/utils/api";
+import { formatToArray } from "~/utils/helpers";
+import { DeleteCardConfirmation } from "~/views/card/components/DeleteCardConfirmation";
+import {
+  defaultBoardViewMode,
+  getBoardViewMode,
+  persistBoardViewPreference,
+  readBoardViewPreference,
+} from "./boardView";
+import {
+  defaultBoardCardDisplayFields,
+  persistBoardCardDisplayPreference,
+  readBoardCardDisplayPreference,
+} from "./cardDisplay";
+import { BoardListView } from "./components/BoardListView";
+import { BoardSortDropdown } from "./components/BoardSortDropdown";
+import { BoardToolbarMenu } from "./components/BoardToolbarMenu";
+import Card from "./components/Card";
+import { CardContextDueDateModal } from "./components/CardContextDueDateModal";
+import { CardContextDuplicateModal } from "./components/CardContextDuplicateModal";
+import { CardContextLabelsModal } from "./components/CardContextLabelsModal";
+import { CardContextMembersModal } from "./components/CardContextMembersModal";
+import { CardContextMenu } from "./components/CardContextMenu";
+import { CardContextMoveListModal } from "./components/CardContextMoveListModal";
+import { DeleteBoardConfirmation } from "./components/DeleteBoardConfirmation";
+import { DeleteListConfirmation } from "./components/DeleteListConfirmation";
+import Filters from "./components/Filters";
+import List from "./components/List";
+import { NewCardForm } from "./components/NewCardForm";
+import { NewListForm } from "./components/NewListForm";
+import { NewTemplateForm } from "./components/NewTemplateForm";
+import { getBoardSortBy, getBoardSortDirection, sortBoardCards } from "./sort";
+import { normaliseBoardSourceFilters } from "./sourceFilter";
+
+type PublicListId = string;
+type BoardSortQuery = Record<string, string | string[] | undefined>;
+interface PersistedBoardSortPreference {
+  version: 1;
+  sortBy: BoardSortBy;
+  sortDirection: BoardSortDirection;
+  secondarySortBy: BoardSortBy | null;
+  secondarySortDirection: BoardSortDirection;
+}
+
+const boardSortQueryKeys = [
+  "sortBy",
+  "sortDirection",
+  "secondarySortBy",
+  "secondarySortDirection",
+] as const;
+
+const boardFilterQueryKeys = [
+  "members",
+  "labels",
+  "lists",
+  "source",
+  "dueDate",
+  "supportUserId",
+  "sourceSystem",
+  "sourceChannel",
+  "reportedFrom",
+  "reportedTo",
+  "updatedFrom",
+  "updatedTo",
+] as const;
+
+const getBoardSortPreferenceKey = (boardPublicId: string) =>
+  `gsd:board-sort:${boardPublicId}`;
+
+const isEditableTarget = (target: EventTarget | null) => {
+  if (!(target instanceof HTMLElement)) return false;
+  return Boolean(
+    target.closest(
+      'input, textarea, select, button, a, [contenteditable="true"], [role="dialog"]',
+    ),
+  );
+};
+
+const isFormEditingTarget = (target: EventTarget | null) => {
+  if (!(target instanceof HTMLElement)) return false;
+  return Boolean(
+    target.closest(
+      'input, textarea, select, a, [contenteditable="true"], [role="dialog"]',
+    ),
+  );
+};
+
+const priorityCycle = [null, "urgent", "high", "medium", "low"] as const;
+const getNextPriority = (priority: CardPriority | null) => {
+  const currentIndex = priorityCycle.indexOf(priority);
+  return priorityCycle[(currentIndex + 1) % priorityCycle.length] ?? null;
+};
+
+const getSingleQueryValue = (value: string | string[] | undefined) =>
+  Array.isArray(value) ? value[0] : value;
+
+const hasBoardSortQuery = (query: BoardSortQuery) =>
+  boardSortQueryKeys.some((key) => query[key] !== undefined);
+
+const parseQueryDate = (value: string | string[] | undefined) => {
+  const raw = getSingleQueryValue(value);
+  if (!raw) return undefined;
+
+  const date = new Date(raw);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+};
+
+const clearBoardFilterQuery = (query: BoardSortQuery) => {
+  boardFilterQueryKeys.forEach((key) => {
+    delete query[key];
+  });
+};
+
+const readBoardSortPreference = (
+  boardPublicId: string,
+): PersistedBoardSortPreference | null => {
+  try {
+    const rawPreference = localStorage.getItem(
+      getBoardSortPreferenceKey(boardPublicId),
+    );
+    if (!rawPreference) return null;
+
+    const preference = JSON.parse(
+      rawPreference,
+    ) as Partial<PersistedBoardSortPreference>;
+    const sortBy = getBoardSortBy(preference.sortBy);
+    const secondarySortBy = getBoardSortBy(
+      preference.secondarySortBy ?? undefined,
+    );
+
+    if (preference.version !== 1 || !sortBy) return null;
+
+    return {
+      version: 1,
+      sortBy,
+      sortDirection: getBoardSortDirection(preference.sortDirection),
+      secondarySortBy:
+        secondarySortBy && secondarySortBy !== sortBy ? secondarySortBy : null,
+      secondarySortDirection: getBoardSortDirection(
+        preference.secondarySortDirection,
+      ),
+    };
+  } catch {
+    return null;
+  }
+};
+
+const persistBoardSortPreference = (
+  boardPublicId: string | null,
+  query: BoardSortQuery,
+) => {
+  if (!boardPublicId) return;
+
+  try {
+    const sortBy = getBoardSortBy(query.sortBy);
+    const rawSecondarySortBy = getBoardSortBy(query.secondarySortBy);
+    const secondarySortBy =
+      sortBy && rawSecondarySortBy !== sortBy ? rawSecondarySortBy : null;
+    const storageKey = getBoardSortPreferenceKey(boardPublicId);
+
+    if (!sortBy) {
+      localStorage.removeItem(storageKey);
+      return;
+    }
+
+    const preference: PersistedBoardSortPreference = {
+      version: 1,
+      sortBy,
+      sortDirection: getBoardSortDirection(query.sortDirection),
+      secondarySortBy,
+      secondarySortDirection: getBoardSortDirection(
+        query.secondarySortDirection,
+      ),
+    };
+
+    localStorage.setItem(storageKey, JSON.stringify(preference));
+  } catch {
+    // localStorage can be unavailable in private/locked-down browser contexts.
+  }
+};
+
+export default function BoardPage({ isTemplate }: { isTemplate?: boolean }) {
+  const params = useParams() as { boardId: string | string[] } | null;
+  const router = useRouter();
+  const utils = api.useUtils();
+  const { showPopup } = usePopup();
+  const { workspace } = useWorkspace();
+  const { openModal, modalContentType, entityId, isOpen, setModalState } =
+    useModal();
+  const [selectedPublicListId, setSelectedPublicListId] =
+    useState<PublicListId>("");
+  const [selectedCardPublicId, setSelectedCardPublicId] = useState<
+    string | null
+  >(null);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [isMobileBoard, setIsMobileBoard] = useState(false);
+  const [mobileCardMenuPublicId, setMobileCardMenuPublicId] = useState<
+    string | null
+  >(null);
+  const [visibleCardFields, setVisibleCardFields] = useState<
+    BoardCardDisplayField[]
+  >(defaultBoardCardDisplayFields);
+  const [boardViewMode, setBoardViewMode] =
+    useState<BoardViewMode>(defaultBoardViewMode);
+
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    cardPublicId: string;
+  } | null>(null);
+
+  const { ref: scrollRef, onMouseDown } = useDragToScroll({
+    enabled: true,
+    direction: "horizontal",
+  });
+
+  const {
+    canCreateCard,
+    canDeleteCard,
+    canCreateList,
+    canEditList,
+    canEditCard,
+    canEditBoard,
+  } = usePermissions();
+
+  const boardId = params?.boardId
+    ? Array.isArray(params.boardId)
+      ? (params.boardId[0] ?? null)
+      : params.boardId
+    : null;
+
+  const updateBoard = api.board.update.useMutation();
+
+  const { register, handleSubmit, setValue } = useForm<UpdateBoardInput>({
+    values: {
+      boardPublicId: boardId ?? "",
+      name: "",
+    },
+  });
+
+  const onSubmit = (values: UpdateBoardInput) => {
+    updateBoard.mutate({
+      boardPublicId: values.boardPublicId,
+      name: values.name,
+    });
+  };
+
+  const semanticFilters = formatToArray(router.query.dueDate) as (
+    | "overdue"
+    | "today"
+    | "tomorrow"
+    | "next-week"
+    | "next-month"
+    | "no-due-date"
+  )[];
+  const sourceFilters = normaliseBoardSourceFilters(
+    formatToArray(router.query.source),
+  );
+
+  const boardType: "regular" | "template" = isTemplate ? "template" : "regular";
+
+  const queryParams = {
+    boardPublicId: boardId ?? "",
+    members: formatToArray(router.query.members),
+    labels: formatToArray(router.query.labels),
+    lists: formatToArray(router.query.lists),
+    ...(sourceFilters.length > 0 && {
+      sources: sourceFilters,
+    }),
+    ...(getSingleQueryValue(router.query.supportUserId)?.trim() && {
+      supportUserId: getSingleQueryValue(router.query.supportUserId)?.trim(),
+    }),
+    ...(getSingleQueryValue(router.query.sourceSystem)?.trim() && {
+      sourceSystem: getSingleQueryValue(router.query.sourceSystem)?.trim(),
+    }),
+    ...(getSingleQueryValue(router.query.sourceChannel)?.trim() && {
+      sourceChannel: getSingleQueryValue(router.query.sourceChannel)?.trim(),
+    }),
+    ...(parseQueryDate(router.query.reportedFrom) && {
+      reportedFrom: parseQueryDate(router.query.reportedFrom),
+    }),
+    ...(parseQueryDate(router.query.reportedTo) && {
+      reportedTo: parseQueryDate(router.query.reportedTo),
+    }),
+    ...(parseQueryDate(router.query.updatedFrom) && {
+      updatedFrom: parseQueryDate(router.query.updatedFrom),
+    }),
+    ...(parseQueryDate(router.query.updatedTo) && {
+      updatedTo: parseQueryDate(router.query.updatedTo),
+    }),
+    ...(semanticFilters.length > 0 && {
+      dueDateFilters: semanticFilters,
+    }),
+    type: boardType,
+  };
+
+  const sortBy = getBoardSortBy(router.query.sortBy);
+  const sortDirection = getBoardSortDirection(router.query.sortDirection);
+  const rawSecondarySortBy = getBoardSortBy(router.query.secondarySortBy);
+  const secondarySortBy =
+    sortBy && rawSecondarySortBy !== sortBy ? rawSecondarySortBy : null;
+  const secondarySortDirection = getBoardSortDirection(
+    router.query.secondarySortDirection,
+  );
+  const appliedSortBy = sortBy;
+  const appliedSecondarySortBy = secondarySortBy;
+  const queryBoardViewMode = getBoardViewMode(
+    getSingleQueryValue(router.query.view),
+  );
+  const activeBoardViewMode = queryBoardViewMode ?? boardViewMode;
+  const isListView = activeBoardViewMode === "list";
+
+  useEffect(() => {
+    if (!router.isReady || !boardId || isTemplate) return;
+
+    if (hasBoardSortQuery(router.query)) {
+      persistBoardSortPreference(boardId, router.query);
+      return;
+    }
+
+    const preference = readBoardSortPreference(boardId);
+    if (!preference) return;
+
+    const nextQuery = {
+      ...router.query,
+      sortBy: preference.sortBy,
+      sortDirection: preference.sortDirection,
+      ...(preference.secondarySortBy
+        ? {
+            secondarySortBy: preference.secondarySortBy,
+            secondarySortDirection: preference.secondarySortDirection,
+          }
+        : {}),
+    };
+
+    void router
+      .replace(
+        {
+          pathname: router.pathname,
+          query: nextQuery,
+        },
+        undefined,
+        { shallow: true },
+      )
+      .catch((error) => console.error(error));
+  }, [boardId, isTemplate, router]);
+
+  useEffect(() => {
+    if (!router.isReady || !boardId || isTemplate) return;
+
+    const queryMode = getBoardViewMode(getSingleQueryValue(router.query.view));
+    if (queryMode) {
+      setBoardViewMode(queryMode);
+      persistBoardViewPreference(boardId, queryMode);
+      return;
+    }
+
+    setBoardViewMode(readBoardViewPreference(boardId));
+  }, [boardId, isTemplate, router.isReady, router.query.view]);
+
+  useEffect(() => {
+    if (!boardId || isTemplate) return;
+    setVisibleCardFields(readBoardCardDisplayPreference(boardId));
+  }, [boardId, isTemplate]);
+
+  const {
+    data: boardData,
+    isSuccess,
+    isLoading: isQueryLoading,
+    error,
+  } = api.board.byId.useQuery(queryParams, {
+    enabled: !!boardId,
+    placeholderData: keepPreviousData,
+  });
+
+  // Redirect to 404 only when the API confirms the board doesn't exist.
+  useEffect(() => {
+    if (router.isReady && boardId && !isQueryLoading) {
+      if (error?.data?.code === "NOT_FOUND") {
+        void router.replace("/404");
+      }
+    }
+  }, [router, boardId, isQueryLoading, error]);
+
+  const refetchBoard = async () => {
+    if (boardId) await utils.board.byId.refetch({ boardPublicId: boardId });
+  };
+
+  useEffect(() => {
+    if (boardId) {
+      setIsInitialLoading(false);
+    }
+  }, [boardId]);
+
+  const isLoading = isInitialLoading || isQueryLoading;
+
+  const boardSortCriteria = useMemo<BoardSortCriterion[]>(() => {
+    if (!appliedSortBy) return [];
+
+    return [
+      { sortBy: appliedSortBy, direction: sortDirection },
+      ...(appliedSecondarySortBy && appliedSecondarySortBy !== appliedSortBy
+        ? [
+            {
+              sortBy: appliedSecondarySortBy,
+              direction: secondarySortDirection,
+            },
+          ]
+        : []),
+    ];
+  }, [
+    appliedSecondarySortBy,
+    appliedSortBy,
+    secondarySortDirection,
+    sortDirection,
+  ]);
+
+  const sortedBoardData = useMemo(() => {
+    if (!boardData || boardSortCriteria.length === 0) return boardData;
+
+    return {
+      ...boardData,
+      lists: boardData.lists.map((list) => ({
+        ...list,
+        cards: sortBoardCards(list.cards, boardSortCriteria),
+      })),
+    };
+  }, [boardData, boardSortCriteria]);
+
+  useScrollRestore(
+    boardId,
+    scrollRef,
+    router,
+    !isLoading && !isListView && (boardData?.lists.length ?? 0) > 0,
+  );
+
+  const updateListMutation = api.list.update.useMutation({
+    onMutate: async (args) => {
+      await utils.board.byId.cancel();
+
+      const currentState = utils.board.byId.getData(queryParams);
+
+      utils.board.byId.setData(queryParams, (oldBoard) => {
+        if (!oldBoard) return oldBoard;
+
+        const updatedLists = Array.from(oldBoard.lists);
+
+        const sourceList = updatedLists.find(
+          (list) => list.publicId === args.listPublicId,
+        );
+
+        const currentIndex = sourceList?.index;
+
+        if (currentIndex === undefined) return oldBoard;
+
+        const removedList = updatedLists.splice(currentIndex, 1)[0];
+
+        if (removedList && args.index !== undefined) {
+          updatedLists.splice(args.index, 0, removedList);
+
+          return {
+            ...oldBoard,
+            lists: updatedLists,
+          };
+        }
+      });
+
+      return { previousState: currentState };
+    },
+    onError: (_error, _newList, context) => {
+      utils.board.byId.setData(queryParams, context?.previousState);
+      showPopup({
+        header: t`Unable to update list`,
+        message: t`Please try again later, or contact customer support.`,
+        icon: "error",
+      });
+    },
+    onSettled: async () => {
+      await utils.board.byId.invalidate(queryParams);
+    },
+  });
+
+  const updateCardMutation = api.card.update.useMutation({
+    onMutate: async (args) => {
+      await utils.board.byId.cancel();
+
+      const currentState = utils.board.byId.getData(queryParams);
+
+      utils.board.byId.setData(queryParams, (oldBoard) => {
+        if (!oldBoard) return oldBoard;
+
+        const sourceList = oldBoard.lists.find((list) =>
+          list.cards.some((card) => card.publicId === args.cardPublicId),
+        );
+        const sourceCard = sourceList?.cards.find(
+          (card) => card.publicId === args.cardPublicId,
+        );
+
+        if (!sourceList || !sourceCard) return oldBoard;
+
+        const updatedCard = {
+          ...sourceCard,
+          ...(args.title !== undefined ? { title: args.title } : {}),
+          ...(args.description !== undefined
+            ? { description: args.description }
+            : {}),
+          ...(args.dueDate !== undefined ? { dueDate: args.dueDate } : {}),
+          ...(args.priority !== undefined ? { priority: args.priority } : {}),
+        };
+
+        const shouldMove =
+          args.listPublicId !== undefined && args.index !== undefined;
+
+        if (!shouldMove) {
+          return {
+            ...oldBoard,
+            lists: oldBoard.lists.map((list) => {
+              if (list.publicId !== sourceList.publicId) return list;
+
+              return {
+                ...list,
+                cards: list.cards.map((card) =>
+                  card.publicId === args.cardPublicId ? updatedCard : card,
+                ),
+              };
+            }),
+          };
+        }
+
+        const destinationList = oldBoard.lists.find(
+          (list) => list.publicId === args.listPublicId,
+        );
+
+        if (!destinationList) return oldBoard;
+
+        return {
+          ...oldBoard,
+          lists: oldBoard.lists.map((list) => {
+            const withoutCard = list.cards.filter(
+              (card) => card.publicId !== args.cardPublicId,
+            );
+
+            if (list.publicId !== destinationList.publicId) {
+              return { ...list, cards: withoutCard };
+            }
+
+            const nextCards = [...withoutCard];
+            nextCards.splice(args.index ?? nextCards.length, 0, {
+              ...updatedCard,
+              index: args.index ?? updatedCard.index,
+            });
+
+            return { ...list, cards: nextCards };
+          }),
+        };
+      });
+
+      return { previousState: currentState };
+    },
+    onError: (_error, _newList, context) => {
+      utils.board.byId.setData(queryParams, context?.previousState);
+      showPopup({
+        header: t`Unable to update card`,
+        message: t`Please try again later, or contact customer support.`,
+        icon: "error",
+      });
+    },
+    onSettled: async () => {
+      await utils.board.byId.invalidate(queryParams);
+    },
+  });
+
+  const deleteCardMutation = api.card.delete.useMutation({
+    onMutate: async (args) => {
+      await utils.board.byId.cancel();
+
+      const currentState = utils.board.byId.getData(queryParams);
+
+      utils.board.byId.setData(queryParams, (oldBoard) => {
+        if (!oldBoard) return oldBoard;
+
+        return {
+          ...oldBoard,
+          lists: oldBoard.lists.map((list) => ({
+            ...list,
+            cards: list.cards.filter(
+              (card) => card.publicId !== args.cardPublicId,
+            ),
+          })),
+        };
+      });
+
+      return { previousState: currentState };
+    },
+    onError: (_error, _newList, context) => {
+      utils.board.byId.setData(queryParams, context?.previousState);
+      showPopup({
+        header: t`Unable to delete card`,
+        message: t`Please try again later, or contact customer support.`,
+        icon: "error",
+      });
+    },
+    onSettled: async () => {
+      setSelectedCardPublicId(null);
+      await utils.board.byId.invalidate(queryParams);
+    },
+  });
+
+  const boardCards = useMemo(
+    () =>
+      sortedBoardData?.lists.flatMap((list, listIndex) =>
+        list.cards.map((card, cardIndex) => ({
+          card,
+          list,
+          listIndex,
+          cardIndex,
+        })),
+      ) ?? [],
+    [sortedBoardData],
+  );
+
+  const selectedCardInfo =
+    boardCards.find(({ card }) => card.publicId === selectedCardPublicId) ??
+    null;
+
+  const mobileCardMenuInfo =
+    boardCards.find(({ card }) => card.publicId === mobileCardMenuPublicId) ??
+    null;
+  const showMobileNewTaskButton =
+    !isTemplate &&
+    !isOpen &&
+    !mobileCardMenuInfo &&
+    canCreateCard &&
+    (sortedBoardData?.lists.length ?? 0) > 0;
+  const defaultNewTaskListPublicId =
+    boardData?.lists.find(
+      (list) => list.name.trim().toLowerCase() === "not started",
+    )?.publicId ?? boardData?.lists[0]?.publicId;
+
+  const getCardMoveIndex = useCallback(
+    (
+      sourceListPublicId: string,
+      destinationListPublicId: string,
+      destinationIndex: number,
+    ) => {
+      if (!appliedSortBy) return destinationIndex;
+
+      if (sourceListPublicId === destinationListPublicId) return null;
+
+      const destinationList = boardData?.lists.find(
+        (list) => list.publicId === destinationListPublicId,
+      );
+
+      if (!destinationList) return destinationIndex;
+
+      return (
+        destinationList.cards.reduce(
+          (maxIndex, card) => Math.max(maxIndex, card.index),
+          -1,
+        ) + 1
+      );
+    },
+    [appliedSortBy, boardData?.lists],
+  );
+
+  const openNewCardForm = useCallback(
+    (preferredListPublicId?: string) => {
+      if (!canCreateCard) return;
+
+      const listPublicId = preferredListPublicId ?? defaultNewTaskListPublicId;
+
+      if (!listPublicId) return;
+      setSelectedPublicListId(listPublicId);
+      openModal("NEW_CARD");
+    },
+    [canCreateCard, defaultNewTaskListPublicId, openModal],
+  );
+
+  const updateSort = useCallback(
+    async (
+      level: BoardSortLevel,
+      nextSortBy: BoardSortBy | null,
+      nextDirection: BoardSortDirection,
+    ) => {
+      const nextQuery = { ...router.query };
+
+      if (level === "primary") {
+        if (nextSortBy) {
+          nextQuery.sortBy = nextSortBy;
+          nextQuery.sortDirection = nextDirection;
+
+          if (nextQuery.secondarySortBy === nextSortBy) {
+            delete nextQuery.secondarySortBy;
+            delete nextQuery.secondarySortDirection;
+          }
+        } else {
+          delete nextQuery.sortBy;
+          delete nextQuery.sortDirection;
+          delete nextQuery.secondarySortBy;
+          delete nextQuery.secondarySortDirection;
+        }
+      } else if (nextSortBy) {
+        nextQuery.secondarySortBy = nextSortBy;
+        nextQuery.secondarySortDirection = nextDirection;
+      } else {
+        delete nextQuery.secondarySortBy;
+        delete nextQuery.secondarySortDirection;
+      }
+
+      persistBoardSortPreference(boardId, nextQuery);
+
+      try {
+        await router.push({
+          pathname: router.pathname,
+          query: nextQuery,
+        });
+      } catch (error) {
+        console.error(error);
+      }
+    },
+    [boardId, router],
+  );
+
+  const showTimeView = useCallback(async () => {
+    const nextQuery: BoardSortQuery = {
+      ...router.query,
+      view: "list",
+      sortBy: "updatedAt",
+      sortDirection: "desc",
+    };
+    delete nextQuery.secondarySortBy;
+    delete nextQuery.secondarySortDirection;
+    clearBoardFilterQuery(nextQuery);
+
+    persistBoardSortPreference(boardId, nextQuery);
+    setBoardViewMode("list");
+    if (boardId) persistBoardViewPreference(boardId, "list");
+
+    try {
+      await router.push({
+        pathname: router.pathname,
+        query: nextQuery,
+      });
+    } catch (error) {
+      console.error(error);
+    }
+  }, [boardId, router]);
+
+  const updateVisibleCardFields = useCallback(
+    (fields: BoardCardDisplayField[]) => {
+      setVisibleCardFields(fields);
+      if (boardId) persistBoardCardDisplayPreference(boardId, fields);
+    },
+    [boardId],
+  );
+
+  const updateBoardViewMode = useCallback(
+    (mode: BoardViewMode) => {
+      setBoardViewMode(mode);
+      if (boardId) persistBoardViewPreference(boardId, mode);
+
+      const nextQuery = { ...router.query };
+      if (mode === defaultBoardViewMode) {
+        delete nextQuery.view;
+      } else {
+        nextQuery.view = mode;
+      }
+
+      void router
+        .push(
+          {
+            pathname: router.pathname,
+            query: nextQuery,
+          },
+          undefined,
+          { shallow: true },
+        )
+        .catch((error) => console.error(error));
+    },
+    [boardId, router],
+  );
+
+  useEffect(() => {
+    if (
+      selectedCardPublicId &&
+      !boardCards.some(({ card }) => card.publicId === selectedCardPublicId)
+    ) {
+      setSelectedCardPublicId(null);
+    }
+  }, [boardCards, selectedCardPublicId]);
+
+  useEffect(() => {
+    if (
+      mobileCardMenuPublicId &&
+      !boardCards.some(({ card }) => card.publicId === mobileCardMenuPublicId)
+    ) {
+      setMobileCardMenuPublicId(null);
+    }
+  }, [boardCards, mobileCardMenuPublicId]);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(max-width: 767px)");
+    const updateMobileState = () => setIsMobileBoard(mediaQuery.matches);
+
+    updateMobileState();
+    mediaQuery.addEventListener("change", updateMobileState);
+    return () => mediaQuery.removeEventListener("change", updateMobileState);
+  }, []);
+
+  const openCard = useCallback(
+    (cardPublicId: string) => {
+      if (cardPublicId.startsWith("PLACEHOLDER")) return;
+      void router.push(
+        isTemplate
+          ? `/templates/${boardId}/cards/${cardPublicId}`
+          : `/cards/${cardPublicId}`,
+      );
+    },
+    [boardId, isTemplate, router],
+  );
+
+  const moveSelectedCardAcrossLists = useCallback(
+    (direction: -1 | 1) => {
+      if (!canEditCard || !selectedCardInfo) return;
+
+      const targetList =
+        boardData?.lists[selectedCardInfo.listIndex + direction];
+      if (!targetList) return;
+
+      const index = getCardMoveIndex(
+        selectedCardInfo.list.publicId,
+        targetList.publicId,
+        Math.min(selectedCardInfo.cardIndex, targetList.cards.length),
+      );
+      if (index === null) return;
+
+      updateCardMutation.mutate({
+        cardPublicId: selectedCardInfo.card.publicId,
+        listPublicId: targetList.publicId,
+        index,
+      });
+      setSelectedPublicListId(targetList.publicId);
+    },
+    [
+      boardData?.lists,
+      canEditCard,
+      getCardMoveIndex,
+      selectedCardInfo,
+      updateCardMutation,
+    ],
+  );
+
+  const moveSelectedCardToDone = useCallback(() => {
+    if (!canEditCard || !selectedCardInfo) return;
+
+    if (selectedCardInfo.card.publicId.startsWith("PLACEHOLDER")) return;
+
+    const doneList = boardData?.lists.find(
+      (list) => list.name.trim().toLowerCase() === "done",
+    );
+
+    if (!doneList) {
+      showPopup({
+        header: t`Done list not found`,
+        message: t`Create a list named Done first.`,
+        icon: "error",
+      });
+      return;
+    }
+
+    if (doneList.publicId === selectedCardInfo.list.publicId) return;
+
+    updateCardMutation.mutate({
+      cardPublicId: selectedCardInfo.card.publicId,
+      listPublicId: doneList.publicId,
+      index: doneList.cards.length,
+    });
+    setSelectedPublicListId(doneList.publicId);
+  }, [
+    boardData?.lists,
+    canEditCard,
+    selectedCardInfo,
+    showPopup,
+    updateCardMutation,
+  ]);
+
+  const moveSelection = useCallback(
+    (direction: "up" | "down" | "left" | "right") => {
+      if (!boardData?.lists.length) return;
+
+      if (!selectedCardInfo) {
+        const firstCardInfo = boardCards.find(
+          ({ card }) => !card.publicId.startsWith("PLACEHOLDER"),
+        );
+        if (firstCardInfo) {
+          setSelectedCardPublicId(firstCardInfo.card.publicId);
+          setSelectedPublicListId(firstCardInfo.list.publicId);
+        }
+        return;
+      }
+
+      if (isListView) {
+        if (direction !== "up" && direction !== "down") return;
+
+        const selectableCards = boardCards.filter(
+          ({ card }) => !card.publicId.startsWith("PLACEHOLDER"),
+        );
+        const currentIndex = selectableCards.findIndex(
+          ({ card }) => card.publicId === selectedCardInfo.card.publicId,
+        );
+        const nextCardInfo =
+          selectableCards[currentIndex + (direction === "up" ? -1 : 1)] ??
+          selectedCardInfo;
+
+        setSelectedCardPublicId(nextCardInfo.card.publicId);
+        setSelectedPublicListId(nextCardInfo.list.publicId);
+        return;
+      }
+
+      let nextCard = selectedCardInfo.card;
+
+      if (direction === "up") {
+        nextCard =
+          selectedCardInfo.list.cards[selectedCardInfo.cardIndex - 1] ??
+          selectedCardInfo.card;
+      }
+
+      if (direction === "down") {
+        nextCard =
+          selectedCardInfo.list.cards[selectedCardInfo.cardIndex + 1] ??
+          selectedCardInfo.card;
+      }
+
+      if (direction === "left" || direction === "right") {
+        const listOffset = direction === "left" ? -1 : 1;
+        const nextList =
+          boardData.lists[selectedCardInfo.listIndex + listOffset];
+        nextCard =
+          nextList?.cards[
+            Math.min(selectedCardInfo.cardIndex, nextList.cards.length - 1)
+          ] ?? selectedCardInfo.card;
+      }
+
+      setSelectedCardPublicId(nextCard.publicId);
+      setSelectedPublicListId(
+        boardCards.find(({ card }) => card.publicId === nextCard.publicId)?.list
+          .publicId ?? selectedCardInfo.list.publicId,
+      );
+    },
+    [boardCards, boardData, isListView, selectedCardInfo],
+  );
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (isOpen || mobileCardMenuPublicId || isEditableTarget(event.target))
+        return;
+
+      const key = event.key.toLowerCase();
+
+      if (key === "c") {
+        event.preventDefault();
+        openNewCardForm();
+        return;
+      }
+
+      if (
+        event.key === "ArrowUp" ||
+        event.key === "ArrowDown" ||
+        event.key === "ArrowLeft" ||
+        event.key === "ArrowRight"
+      ) {
+        event.preventDefault();
+        moveSelection(
+          event.key === "ArrowUp"
+            ? "up"
+            : event.key === "ArrowDown"
+              ? "down"
+              : event.key === "ArrowLeft"
+                ? "left"
+                : "right",
+        );
+        return;
+      }
+
+      if (!selectedCardInfo) return;
+
+      if (event.key === "Tab") {
+        event.preventDefault();
+        moveSelectedCardAcrossLists(event.shiftKey ? -1 : 1);
+        return;
+      }
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        openCard(selectedCardInfo.card.publicId);
+        return;
+      }
+
+      if (key === "l") {
+        event.preventDefault();
+        openModal("CARD_CONTEXT_LABELS", selectedCardInfo.card.publicId);
+        return;
+      }
+
+      if (
+        key === "p" &&
+        canEditCard &&
+        !selectedCardInfo.card.publicId.startsWith("PLACEHOLDER")
+      ) {
+        event.preventDefault();
+        updateCardMutation.mutate({
+          cardPublicId: selectedCardInfo.card.publicId,
+          priority: getNextPriority(selectedCardInfo.card.priority),
+        });
+        return;
+      }
+
+      if (key === "e") {
+        event.preventDefault();
+        moveSelectedCardToDone();
+        return;
+      }
+
+      if (
+        (event.key === "Delete" || event.key === "Backspace") &&
+        canDeleteCard &&
+        !selectedCardInfo.card.publicId.startsWith("PLACEHOLDER")
+      ) {
+        event.preventDefault();
+        deleteCardMutation.mutate({
+          cardPublicId: selectedCardInfo.card.publicId,
+        });
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [
+    canDeleteCard,
+    canEditCard,
+    deleteCardMutation,
+    isOpen,
+    mobileCardMenuPublicId,
+    moveSelectedCardAcrossLists,
+    moveSelectedCardToDone,
+    moveSelection,
+    openCard,
+    openModal,
+    openNewCardForm,
+    selectedCardInfo,
+    updateCardMutation,
+  ]);
+
+  useEffect(() => {
+    if (boardData) {
+      setValue("name", boardData.name || "");
+    }
+  }, [isSuccess, boardData, setValue]);
+
+  const openNewListForm = (publicBoardId: string) => {
+    openModal("NEW_LIST");
+    setSelectedPublicListId(publicBoardId);
+  };
+
+  const handleCardContextMenuAction = (action: CardContextMenuAction) => {
+    const cardPublicId = contextMenu?.cardPublicId;
+    if (!cardPublicId) return;
+    setContextMenu(null);
+    if (action === "copyLink") {
+      const path = isTemplate
+        ? `/templates/${boardId}/cards/${cardPublicId}`
+        : `/cards/${cardPublicId}`;
+      const url = `${typeof window !== "undefined" ? window.location.origin : ""}${path}`;
+      void navigator.clipboard.writeText(url).then(
+        () => {
+          showPopup({
+            header: t`Link copied`,
+            icon: "success",
+            message: t`Card URL copied to clipboard`,
+          });
+        },
+        () => {
+          showPopup({
+            header: t`Unable to copy link`,
+            icon: "error",
+            message: t`Please try again.`,
+          });
+        },
+      );
+      return;
+    }
+    if (action === "duplicate") {
+      setModalState("CARD_CONTEXT_DUPLICATE", {
+        boardPublicId: boardId ?? "",
+        isTemplate: !!isTemplate,
+      });
+      openModal("CARD_CONTEXT_DUPLICATE", cardPublicId);
+      return;
+    }
+    if (action === "delete") {
+      openModal("DELETE_CARD", cardPublicId);
+      return;
+    }
+    const modalType =
+      action === "members"
+        ? "CARD_CONTEXT_MEMBERS"
+        : action === "move"
+          ? "CARD_CONTEXT_MOVE_LIST"
+          : action === "labels"
+            ? "CARD_CONTEXT_LABELS"
+            : "CARD_CONTEXT_DUE_DATE";
+    openModal(modalType, cardPublicId);
+  };
+
+  const closeMobileCardMenu = () => setMobileCardMenuPublicId(null);
+
+  const handleMobileCardAction = (
+    action: "move" | "labels" | "priority" | "edit",
+  ) => {
+    if (!mobileCardMenuInfo) return;
+
+    const cardPublicId = mobileCardMenuInfo.card.publicId;
+    closeMobileCardMenu();
+
+    if (action === "edit") {
+      openCard(cardPublicId);
+      return;
+    }
+
+    if (!canEditCard || cardPublicId.startsWith("PLACEHOLDER")) return;
+
+    if (action === "move") {
+      openModal("CARD_CONTEXT_MOVE_LIST", cardPublicId);
+      return;
+    }
+
+    if (action === "labels") {
+      openModal("CARD_CONTEXT_LABELS", cardPublicId);
+      return;
+    }
+
+    updateCardMutation.mutate({
+      cardPublicId,
+      priority: getNextPriority(mobileCardMenuInfo.card.priority),
+    });
+  };
+
+  const onDragEnd = ({
+    source,
+    destination,
+    draggableId,
+    type,
+  }: DropResult): void => {
+    if (!destination) {
+      return;
+    }
+
+    if (type === "LIST" && canEditList) {
+      updateListMutation.mutate({
+        listPublicId: draggableId,
+        index: destination.index,
+      });
+    }
+
+    if (type === "CARD" && canEditCard) {
+      const index = getCardMoveIndex(
+        source.droppableId,
+        destination.droppableId,
+        destination.index,
+      );
+      if (index === null) return;
+
+      updateCardMutation.mutate({
+        cardPublicId: draggableId,
+        listPublicId: destination.droppableId,
+        index,
+      });
+    }
+  };
+
+  const renderModalContent = () => {
+    return (
+      <>
+        <Modal
+          modalSize="sm"
+          isVisible={isOpen && modalContentType === "DELETE_BOARD"}
+        >
+          <DeleteBoardConfirmation
+            isTemplate={!!isTemplate}
+            boardPublicId={boardId ?? ""}
+          />
+        </Modal>
+
+        <Modal
+          modalSize="sm"
+          isVisible={isOpen && modalContentType === "DELETE_LIST"}
+        >
+          <DeleteListConfirmation
+            listPublicId={selectedPublicListId}
+            queryParams={queryParams}
+          />
+        </Modal>
+
+        <Modal
+          modalSize="md"
+          positionFromTop="sm"
+          isVisible={isOpen && modalContentType === "NEW_CARD"}
+        >
+          <NewCardForm
+            isTemplate={!!isTemplate}
+            isBoardSorted={!!appliedSortBy}
+            boardPublicId={boardId ?? ""}
+            listPublicId={selectedPublicListId}
+            queryParams={queryParams}
+          />
+        </Modal>
+
+        <Modal
+          modalSize="sm"
+          isVisible={isOpen && modalContentType === "NEW_LIST"}
+        >
+          <NewListForm
+            boardPublicId={boardId ?? ""}
+            queryParams={queryParams}
+          />
+        </Modal>
+
+        <Modal
+          modalSize="sm"
+          isVisible={isOpen && modalContentType === "NEW_WORKSPACE"}
+        >
+          <NewWorkspaceForm />
+        </Modal>
+
+        <Modal
+          modalSize="sm"
+          isVisible={isOpen && modalContentType === "NEW_LABEL"}
+        >
+          <LabelForm boardPublicId={boardId ?? ""} refetch={refetchBoard} />
+        </Modal>
+
+        <Modal
+          modalSize="sm"
+          isVisible={isOpen && modalContentType === "EDIT_LABEL"}
+        >
+          <LabelForm
+            boardPublicId={boardId ?? ""}
+            refetch={refetchBoard}
+            isEdit
+          />
+        </Modal>
+
+        <Modal
+          modalSize="sm"
+          isVisible={isOpen && modalContentType === "DELETE_LABEL"}
+        >
+          <DeleteLabelConfirmation
+            refetch={refetchBoard}
+            labelPublicId={entityId}
+          />
+        </Modal>
+
+        <Modal
+          modalSize="sm"
+          isVisible={isOpen && modalContentType === "CREATE_TEMPLATE"}
+        >
+          <NewTemplateForm
+            workspacePublicId={workspace.publicId}
+            sourceBoardPublicId={boardId ?? ""}
+            sourceBoardName={boardData?.name ?? ""}
+          />
+        </Modal>
+
+        <Modal
+          modalSize="sm"
+          isVisible={isOpen && modalContentType === "EDIT_YOUTUBE"}
+        >
+          <EditYouTubeModal />
+        </Modal>
+
+        <Modal
+          modalSize="sm"
+          isVisible={isOpen && modalContentType === "CARD_CONTEXT_MEMBERS"}
+        >
+          <CardContextMembersModal />
+        </Modal>
+        <Modal
+          modalSize="sm"
+          isVisible={isOpen && modalContentType === "CARD_CONTEXT_MOVE_LIST"}
+        >
+          <CardContextMoveListModal />
+        </Modal>
+        <Modal
+          modalSize="sm"
+          isVisible={isOpen && modalContentType === "CARD_CONTEXT_LABELS"}
+        >
+          <CardContextLabelsModal />
+        </Modal>
+        <Modal
+          modalSize="sm"
+          isVisible={isOpen && modalContentType === "CARD_CONTEXT_DUE_DATE"}
+        >
+          <CardContextDueDateModal />
+        </Modal>
+        <Modal
+          modalSize="md"
+          isVisible={isOpen && modalContentType === "CARD_CONTEXT_DUPLICATE"}
+        >
+          <CardContextDuplicateModal
+            boardPublicId={boardId ?? ""}
+            isTemplate={!!isTemplate}
+          />
+        </Modal>
+        <Modal
+          modalSize="sm"
+          isVisible={isOpen && modalContentType === "DELETE_CARD"}
+        >
+          <DeleteCardConfirmation
+            cardPublicId={entityId}
+            boardPublicId={boardId ?? ""}
+          />
+        </Modal>
+      </>
+    );
+  };
+
+  return (
+    <>
+      <PageHead
+        title={`${boardData?.name ?? (isTemplate ? t`Board` : t`Template`)} | ${workspace.name}`}
+      />
+      <div className="relative flex h-full min-h-0 flex-col">
+        <PatternedBackground />
+        <div className="bg-light-50/95 dark:bg-dark-50/95 sticky top-0 z-20 flex w-full flex-col gap-3 p-4 backdrop-blur md:relative md:flex-row md:justify-between md:bg-transparent md:p-8 md:backdrop-blur-none md:dark:bg-transparent">
+          {isLoading && !boardData && (
+            <div className="flex space-x-2">
+              <div className="h-[2.3rem] w-[150px] animate-pulse rounded-[5px] bg-light-200 dark:bg-dark-100" />
+            </div>
+          )}
+          {boardData && (
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <form
+                onSubmit={handleSubmit(onSubmit)}
+                className="min-w-0 focus-visible:outline-none"
+              >
+                <input
+                  id="name"
+                  type="text"
+                  {...register("name")}
+                  onBlur={canEditBoard ? handleSubmit(onSubmit) : undefined}
+                  readOnly={!canEditBoard}
+                  className="block w-full truncate border-0 bg-transparent p-0 py-0 text-lg font-bold leading-8 tracking-tight text-neutral-900 focus:ring-0 focus-visible:outline-none disabled:cursor-not-allowed dark:text-dark-1000 sm:text-[1.2rem] md:leading-[2.3rem]"
+                />
+              </form>
+              {!isTemplate && (
+                <Button
+                  type="button"
+                  variant={
+                    isListView &&
+                    sortBy === "updatedAt" &&
+                    sortDirection === "desc" &&
+                    !secondarySortBy
+                      ? "primary"
+                      : "secondary"
+                  }
+                  iconLeft={<HiOutlineClock />}
+                  onClick={() => {
+                    void showTimeView();
+                  }}
+                >
+                  {t`Time view`}
+                </Button>
+              )}
+            </div>
+          )}
+          {!boardData && !isLoading && (
+            <p className="block p-0 py-0 font-bold leading-[2.3rem] tracking-tight text-neutral-900 dark:text-dark-1000 sm:text-[1.2rem]">
+              {t`${isTemplate ? "Template" : "Board"} not found`}
+            </p>
+          )}
+          <div className="flex flex-wrap items-center gap-2 md:justify-end">
+            {isTemplate && (
+              <div className="inline-flex cursor-default items-center justify-center whitespace-nowrap rounded-md border-[1px] border-light-300 bg-light-50 px-3 py-2 text-sm font-semibold text-light-950 shadow-sm dark:border-dark-300 dark:bg-dark-50 dark:text-dark-950">
+                <span className="mr-2">
+                  <HiOutlineRectangleStack />
+                </span>
+                {t`Template`}
+              </div>
+            )}
+            {!isTemplate && (
+              <>
+                {boardData && (
+                  <Filters
+                    labels={boardData.labels}
+                    members={boardData.workspace.members.filter(
+                      (member) => member.user !== null,
+                    )}
+                    lists={boardData.allLists}
+                    position="left"
+                    isLoading={!boardData}
+                  />
+                )}
+                <BoardSortDropdown
+                  sortBy={sortBy}
+                  direction={sortDirection}
+                  secondarySortBy={secondarySortBy}
+                  secondaryDirection={secondarySortDirection}
+                  isLoading={!boardData}
+                  onChange={updateSort}
+                />
+                <Button
+                  type="button"
+                  variant={
+                    isListView &&
+                    sortBy === "updatedAt" &&
+                    sortDirection === "desc" &&
+                    !secondarySortBy
+                      ? "primary"
+                      : "secondary"
+                  }
+                  disabled={!boardData}
+                  iconLeft={<HiOutlineClock />}
+                  onClick={() => {
+                    void showTimeView();
+                  }}
+                >
+                  {t`Time view`}
+                </Button>
+              </>
+            )}
+            <BoardToolbarMenu
+              isTemplate={!!isTemplate}
+              isLoading={!boardData}
+              boardPublicId={boardId ?? ""}
+              isArchived={boardData?.isArchived ?? false}
+              isFavorite={boardData?.favorite}
+              boardName={boardData?.name}
+              viewMode={activeBoardViewMode}
+              visibleFields={visibleCardFields}
+              canCreateList={canCreateList}
+              onCreateList={() => {
+                if (boardId && canCreateList) openNewListForm(boardId);
+              }}
+              onViewChange={updateBoardViewMode}
+              onFieldsChange={updateVisibleCardFields}
+            />
+          </div>
+        </div>
+
+        <div
+          ref={scrollRef}
+          onMouseDown={isListView ? undefined : onMouseDown}
+          className={twMerge(
+            "scrollbar-track-rounded-[4px] scrollbar-thumb-rounded-[4px] z-0 flex-1 overscroll-contain px-4 pb-28 scrollbar scrollbar-track-light-200 scrollbar-thumb-light-400 dark:scrollbar-track-dark-100 dark:scrollbar-thumb-dark-300 md:pb-0",
+            isListView
+              ? "scrollbar-w-[8px] overflow-y-auto overflow-x-hidden md:px-0"
+              : "scrollbar-w-none scrollbar-h-[8px] snap-x snap-mandatory overflow-y-hidden overflow-x-scroll md:px-0",
+          )}
+        >
+          {isLoading ? (
+            <div className="flex md:ml-[2rem]">
+              <div className="0 mr-3 h-[500px] w-[calc(100vw-2rem)] animate-pulse rounded-md bg-light-200 dark:bg-dark-100 sm:w-[22rem] md:mr-5 md:w-[18rem]" />
+              <div className="0 mr-3 h-[275px] w-[calc(100vw-2rem)] animate-pulse rounded-md bg-light-200 dark:bg-dark-100 sm:w-[22rem] md:mr-5 md:w-[18rem]" />
+              <div className="0 mr-3 h-[375px] w-[calc(100vw-2rem)] animate-pulse rounded-md bg-light-200 dark:bg-dark-100 sm:w-[22rem] md:mr-5 md:w-[18rem]" />
+            </div>
+          ) : sortedBoardData ? (
+            <>
+              {sortedBoardData.lists.length === 0 ? (
+                <div className="z-10 flex h-full w-full flex-col items-center justify-center space-y-8 pb-[150px]">
+                  <div className="flex flex-col items-center">
+                    <HiOutlineSquare3Stack3D className="h-10 w-10 text-light-800 dark:text-dark-800" />
+                    <p className="mb-2 mt-4 text-[14px] font-bold text-light-1000 dark:text-dark-950">
+                      {t`No lists`}
+                    </p>
+                    <p className="text-[14px] text-light-900 dark:text-dark-900">
+                      {canCreateList
+                        ? t`Get started by creating a new list`
+                        : t`No lists have been created yet`}
+                    </p>
+                  </div>
+                  <Tooltip
+                    content={
+                      !canCreateList ? t`You don't have permission` : undefined
+                    }
+                  >
+                    <Button
+                      onClick={() => {
+                        if (boardId && canCreateList) openNewListForm(boardId);
+                      }}
+                      disabled={!canCreateList}
+                    >
+                      {t`Create new list`}
+                    </Button>
+                  </Tooltip>
+                </div>
+              ) : isListView ? (
+                <BoardListView
+                  cards={boardCards}
+                  cardPrefix={sortedBoardData.workspace.cardPrefix}
+                  selectedCardPublicId={selectedCardPublicId}
+                  visibleSupportFields={visibleCardFields}
+                  sortCriteria={boardSortCriteria}
+                  isMobileBoard={isMobileBoard}
+                  isContextMenuDisabled={env("NEXT_PUBLIC_KAN_ENV") === "cloud"}
+                  onSelectCard={(cardPublicId, listPublicId) => {
+                    setSelectedCardPublicId(cardPublicId);
+                    setSelectedPublicListId(listPublicId);
+                  }}
+                  onOpenCard={openCard}
+                  onOpenMobileCardMenu={setMobileCardMenuPublicId}
+                  onOpenContextMenu={(event, cardPublicId) => {
+                    event.preventDefault();
+                    setContextMenu({
+                      x: event.clientX,
+                      y: event.clientY,
+                      cardPublicId,
+                    });
+                  }}
+                />
+              ) : (
+                <DragDropContext onDragEnd={onDragEnd}>
+                  <Droppable
+                    droppableId="all-lists"
+                    direction="horizontal"
+                    type="LIST"
+                  >
+                    {(provided) => (
+                      <div
+                        className="flex"
+                        ref={provided.innerRef}
+                        {...provided.droppableProps}
+                      >
+                        <div className="min-w-0 md:min-w-[2rem]" />
+                        {sortedBoardData.lists.map((list, index) => (
+                          <List
+                            index={index}
+                            key={list.publicId}
+                            list={list}
+                            cardCount={list.cards.length}
+                            setSelectedPublicListId={(publicListId) =>
+                              setSelectedPublicListId(publicListId)
+                            }
+                          >
+                            <Droppable
+                              droppableId={`${list.publicId}`}
+                              type="CARD"
+                            >
+                              {(provided) => (
+                                <div
+                                  ref={provided.innerRef}
+                                  {...provided.droppableProps}
+                                  className="scrollbar-track-rounded-[4px] scrollbar-thumb-rounded-[4px] scrollbar-w-[8px] z-10 h-full max-h-[calc(100dvh-10.5rem)] min-h-[2rem] overflow-y-auto pr-1 scrollbar dark:scrollbar-track-dark-100 dark:scrollbar-thumb-dark-600 md:max-h-[calc(100vh-225px)]"
+                                >
+                                  {list.cards.map((card, index) => (
+                                    <Draggable
+                                      key={card.publicId}
+                                      draggableId={card.publicId}
+                                      index={index}
+                                      isDragDisabled={!canEditCard}
+                                    >
+                                      {(provided) => (
+                                        <div
+                                          role="link"
+                                          tabIndex={
+                                            card.publicId.startsWith(
+                                              "PLACEHOLDER",
+                                            )
+                                              ? -1
+                                              : 0
+                                          }
+                                          onClick={(e) => {
+                                            if (
+                                              card.publicId.startsWith(
+                                                "PLACEHOLDER",
+                                              )
+                                            )
+                                              return;
+                                            if (
+                                              isMobileBoard &&
+                                              !isFormEditingTarget(e.target)
+                                            ) {
+                                              setSelectedCardPublicId(
+                                                card.publicId,
+                                              );
+                                              setSelectedPublicListId(
+                                                list.publicId,
+                                              );
+                                              setMobileCardMenuPublicId(
+                                                card.publicId,
+                                              );
+                                              return;
+                                            }
+                                            if (
+                                              canEditCard &&
+                                              isEditableTarget(e.target)
+                                            )
+                                              return;
+                                            openCard(card.publicId);
+                                          }}
+                                          onFocus={() => {
+                                            setSelectedCardPublicId(
+                                              card.publicId,
+                                            );
+                                            setSelectedPublicListId(
+                                              list.publicId,
+                                            );
+                                          }}
+                                          onContextMenu={(e) => {
+                                            if (
+                                              card.publicId.startsWith(
+                                                "PLACEHOLDER",
+                                              ) ||
+                                              env("NEXT_PUBLIC_KAN_ENV") ===
+                                                "cloud"
+                                            )
+                                              return;
+                                            e.preventDefault();
+                                            setContextMenu({
+                                              x: e.clientX,
+                                              y: e.clientY,
+                                              cardPublicId: card.publicId,
+                                            });
+                                          }}
+                                          key={card.publicId}
+                                          className={`mb-2 flex !cursor-pointer flex-col ${
+                                            card.publicId.startsWith(
+                                              "PLACEHOLDER",
+                                            )
+                                              ? "pointer-events-none"
+                                              : ""
+                                          }`}
+                                          ref={provided.innerRef}
+                                          {...provided.draggableProps}
+                                          {...provided.dragHandleProps}
+                                        >
+                                          <Card
+                                            title={card.title}
+                                            ticketNumber={
+                                              card.cardNumber != null
+                                                ? `${sortedBoardData.workspace.cardPrefix}-${card.cardNumber}`
+                                                : null
+                                            }
+                                            labels={card.labels}
+                                            members={card.members}
+                                            checklists={card.checklists}
+                                            description={
+                                              card.description ?? null
+                                            }
+                                            comments={card.comments}
+                                            attachments={card.attachments}
+                                            dueDate={card.dueDate}
+                                            updatedAt={
+                                              card.updatedAt ?? card.createdAt
+                                            }
+                                            priority={card.priority}
+                                            supportTicketMetadata={
+                                              card.supportTicketMetadata
+                                            }
+                                            visibleSupportFields={
+                                              visibleCardFields
+                                            }
+                                            isSelected={
+                                              selectedCardPublicId ===
+                                              card.publicId
+                                            }
+                                            canEdit={canEditCard}
+                                            onSelect={() => {
+                                              setSelectedCardPublicId(
+                                                card.publicId,
+                                              );
+                                              setSelectedPublicListId(
+                                                list.publicId,
+                                              );
+                                            }}
+                                            onUpdate={(values) => {
+                                              if (!canEditCard) return;
+                                              updateCardMutation.mutate({
+                                                cardPublicId: card.publicId,
+                                                ...values,
+                                              });
+                                            }}
+                                            disableInlineEditing={isMobileBoard}
+                                          />
+                                        </div>
+                                      )}
+                                    </Draggable>
+                                  ))}
+                                  {provided.placeholder}
+                                </div>
+                              )}
+                            </Droppable>
+                          </List>
+                        ))}
+                        <div className="min-w-[0.75rem]" />
+                        {provided.placeholder}
+                      </div>
+                    )}
+                  </Droppable>
+                </DragDropContext>
+              )}
+            </>
+          ) : null}
+        </div>
+        {contextMenu && (
+          <CardContextMenu
+            x={contextMenu.x}
+            y={contextMenu.y}
+            onClose={() => setContextMenu(null)}
+            onAction={handleCardContextMenuAction}
+            canEdit={!!canEditCard}
+          />
+        )}
+        {showMobileNewTaskButton && (
+          <div className="bg-light-50/95 dark:bg-dark-50/95 fixed inset-x-0 bottom-0 z-[70] border-t border-light-300 px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 shadow-[0_-8px_24px_rgba(0,0,0,0.08)] backdrop-blur dark:border-dark-300 dark:shadow-[0_-8px_24px_rgba(0,0,0,0.24)] md:hidden">
+            <button
+              type="button"
+              onClick={() => openNewCardForm()}
+              className="flex h-12 w-full items-center justify-center gap-2 rounded-md bg-light-1000 px-4 text-sm font-semibold text-light-50 shadow-sm transition hover:bg-light-900 active:translate-y-px dark:bg-dark-1000 dark:text-dark-50 dark:hover:bg-dark-900"
+            >
+              <HiOutlinePlusSmall className="h-5 w-5" aria-hidden="true" />
+              {t`NEW TASK`}
+            </button>
+          </div>
+        )}
+        {mobileCardMenuInfo && (
+          <div
+            className="fixed inset-0 z-[180] bg-black/35 md:hidden"
+            role="dialog"
+            aria-modal="true"
+            onClick={closeMobileCardMenu}
+          >
+            <div
+              className="absolute inset-x-0 bottom-0 rounded-t-xl border-t border-light-400 bg-light-50 p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-2xl dark:border-dark-500 dark:bg-dark-100"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="mb-4 flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  {mobileCardMenuInfo.card.cardNumber != null && (
+                    <p className="mb-1 text-xs font-medium text-light-800 dark:text-dark-800">
+                      {sortedBoardData?.workspace.cardPrefix}-
+                      {mobileCardMenuInfo.card.cardNumber}
+                    </p>
+                  )}
+                  <h2 className="line-clamp-2 text-base font-semibold text-neutral-900 dark:text-dark-1000">
+                    {mobileCardMenuInfo.card.title}
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  aria-label={t`Close`}
+                  onClick={closeMobileCardMenu}
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-light-900 hover:bg-light-200 dark:text-dark-900 dark:hover:bg-dark-200"
+                >
+                  <HiMiniXMark className="h-6 w-6" />
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  disabled={!canEditCard}
+                  onClick={() => handleMobileCardAction("move")}
+                  className="flex min-h-12 w-full items-center gap-3 rounded-md border border-light-400 bg-light-100 px-3 text-left text-sm font-semibold text-neutral-900 disabled:opacity-50 dark:border-dark-400 dark:bg-dark-200 dark:text-dark-1000"
+                >
+                  <HiOutlineArrowRightCircle className="h-5 w-5 text-light-900 dark:text-dark-900" />
+                  {t`Move list`}
+                </button>
+                <button
+                  type="button"
+                  disabled={!canEditCard}
+                  onClick={() => handleMobileCardAction("labels")}
+                  className="flex min-h-12 w-full items-center gap-3 rounded-md border border-light-400 bg-light-100 px-3 text-left text-sm font-semibold text-neutral-900 disabled:opacity-50 dark:border-dark-400 dark:bg-dark-200 dark:text-dark-1000"
+                >
+                  <HiOutlineTag className="h-5 w-5 text-light-900 dark:text-dark-900" />
+                  {t`Add label`}
+                </button>
+                <button
+                  type="button"
+                  disabled={!canEditCard}
+                  onClick={() => handleMobileCardAction("priority")}
+                  className="flex min-h-12 w-full items-center gap-3 rounded-md border border-light-400 bg-light-100 px-3 text-left text-sm font-semibold text-neutral-900 disabled:opacity-50 dark:border-dark-400 dark:bg-dark-200 dark:text-dark-1000"
+                >
+                  <HiOutlineFlag className="h-5 w-5 text-light-900 dark:text-dark-900" />
+                  {t`Change priority`}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleMobileCardAction("edit")}
+                  className="flex min-h-12 w-full items-center gap-3 rounded-md bg-neutral-900 px-3 text-left text-sm font-semibold text-white dark:bg-dark-1000 dark:text-dark-50"
+                >
+                  <HiOutlinePencilSquare className="h-5 w-5" />
+                  {t`Edit`}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {renderModalContent()}
+      </div>
+    </>
+  );
+}

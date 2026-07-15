@@ -36,9 +36,7 @@ import { useToday } from '@/lib/use-today'
 import type { NewWindowClickEvent } from '@/lib/windows/open-in-new-window'
 import { useGraph } from '@/providers/graph-provider'
 import { routeForPath } from '@/routing/route'
-import { gsdBoardUrl } from './gsd-board'
-import { KanbanBoard } from './kanban-board'
-import { CardDetailPanel } from './card-detail-panel'
+import { GsdBoard, gsdBoardUrl } from './gsd-board'
 import { TaskBoard } from './task-board'
 import { TaskFiltersMenu } from './task-filters-menu'
 import { TaskGroupSection } from './task-group-section'
@@ -100,7 +98,6 @@ export function TasksScreen(): ReactElement {
   // Board (the default) or the original grouped list; sticky per device.
   const [view, setView] = useState<TasksView>(storedTasksView)
   const gsdUrl = gsdBoardUrl()
-  const [openCardId, setOpenCardId] = useState<string | null>(null)
   const switchView = useCallback((next: TasksView) => {
     setView(next)
     try {
@@ -389,22 +386,14 @@ export function TasksScreen(): ReactElement {
       {view === 'board' ? (
         <div className="min-h-0 flex-1 pb-4">
           {gsdUrl !== null ? (
-            // The native GSD board: Kan's data through the server proxy.
-            <>
-              <KanbanBoard gsdUrl={gsdUrl} onOpenCard={setOpenCardId} />
-              {openCardId !== null ? (
-                <CardDetailPanel
-                  cardPublicId={openCardId}
-                  onClose={() => setOpenCardId(null)}
-                />
-              ) : null}
-            </>
+            // Your actual GSD (apps/gsd), embedded — the real app, all features.
+            <GsdBoard url={gsdUrl} />
           ) : isError ? (
             <p role="alert" className="px-4 py-6 text-sm text-text-muted lg:px-12">
               Couldn’t load tasks.
             </p>
           ) : (
-            // No GSD configured (local dev): the native board stands in.
+            // No GSD configured (local dev): the markdown board stands in.
             <TaskBoard
               open={open ?? []}
               done={boardDone}
