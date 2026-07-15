@@ -76,7 +76,11 @@ void graph
   .reconcile()
   .then(({ applied, removed }) => {
     console.info(`[reflect-server] index reconciled: ${applied} applied, ${removed} removed`)
-    if (gsdUrl !== undefined && gsdUrl !== '' && gsdApiKey !== undefined && gsdApiKey !== '') {
+    // The board proxy and the task sync are independent: REFLECT_GSD_SYNC=0
+    // serves the board (proxy) without running the sync poll — used locally so
+    // a dev server doesn't fight the deployed one over the shared board.
+    const syncEnabled = process.env['REFLECT_GSD_SYNC'] !== '0'
+    if (syncEnabled && gsdUrl !== undefined && gsdUrl !== '' && gsdApiKey !== undefined && gsdApiKey !== '') {
       createGsdSync(
         {
           baseUrl: gsdUrl.replace(/\/+$/, ''),

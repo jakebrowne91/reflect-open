@@ -10,6 +10,7 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import { z } from 'zod'
 import { createAgentRoutes } from './agent-routes'
+import { createBoardProxy } from './board-proxy'
 import { buildMcpServer } from './mcp'
 import { renderLoginPage } from './login-page'
 import type { SessionAuth } from './auth'
@@ -199,6 +200,12 @@ export function createApp(
   // Agent surfaces: boring JSON under /api/agent (inside the auth scope
   // above), and MCP Streamable HTTP at /mcp with the same credentials.
   app.route('/api/agent', createAgentRoutes(graph))
+
+  // The native board's data path: /api/board/* → the headless GSD instance,
+  // authenticated by the Reflect session, key injected server-side.
+  if (config.gsdUrl !== null && config.gsdApiKey !== null) {
+    app.route('/api/board', createBoardProxy(config.gsdUrl, config.gsdApiKey))
+  }
 
   app.all('/mcp', async (c) => {
     if (!isAuthenticated(c)) {

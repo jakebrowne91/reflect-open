@@ -16,6 +16,10 @@ export interface ServerConfig {
   agentToken: string | null
   /** Mark session cookies `Secure` (set behind an HTTPS proxy). */
   secureCookies: boolean
+  /** The headless GSD (Kan) instance backing the native board, if configured. */
+  gsdUrl: string | null
+  /** API key for the GSD instance; kept server-side, injected by the board proxy. */
+  gsdApiKey: string | null
 }
 
 /**
@@ -49,6 +53,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): ServerConfig {
   mkdirSync(dataDir, { recursive: true })
 
   const agentToken = env['REFLECT_AGENT_TOKEN']
+  const gsdUrl = env['REFLECT_GSD_URL']
+  const gsdApiKey = env['REFLECT_GSD_API_KEY']
   return {
     graphDir,
     graphName: env['REFLECT_GRAPH_NAME'] ?? path.basename(graphDir),
@@ -57,5 +63,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): ServerConfig {
     password,
     agentToken: agentToken === undefined || agentToken === '' ? null : agentToken,
     secureCookies: env['REFLECT_SECURE_COOKIES'] === '1',
+    gsdUrl: gsdUrl === undefined || gsdUrl === '' ? null : gsdUrl.replace(/\/+$/, ''),
+    gsdApiKey: gsdApiKey === undefined || gsdApiKey === '' ? null : gsdApiKey,
   }
 }
