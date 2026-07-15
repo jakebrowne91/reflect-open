@@ -11,6 +11,8 @@ Cascade layer order, low to high priority.
 
 @import 'tailwindcss' ;
 @import '@reflect/design-system/styles.css' layer(design);
+/* Custom themes layer over the DS tokens (same layer, later import wins). */
+@import './adeline.css' layer(design);
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
 @import "@meowdown/core/style.css";

@@ -221,7 +221,8 @@ export function useAppShortcuts(): CommandContext {
       back,
       forward,
       clearScrollState,
-      toggleTheme: () => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark'),
+      // Adeline counts as dark: toggling from any dark variant lands on light.
+      toggleTheme: () => setTheme(resolvedTheme !== 'light' ? 'light' : 'dark'),
       toggleSidebar,
       newChat,
       switchGraph: (index) => {

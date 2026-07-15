@@ -1,6 +1,6 @@
 import type { ReactElement } from 'react'
 import type { ThemePreference } from '@reflect/core'
-import { Monitor, Moon, Sun, type LucideIcon } from 'lucide-react'
+import { Monitor, Moon, Sun, Terminal, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useSettings } from '@/providers/settings-provider'
 import { SettingsField } from './field'
@@ -17,6 +17,7 @@ const THEME_OPTIONS: ThemeOption[] = [
   { value: 'system', label: 'System', icon: Monitor },
   { value: 'light', label: 'Light', icon: Sun },
   { value: 'dark', label: 'Dark', icon: Moon },
+  { value: 'adeline', label: 'Adeline', icon: Terminal },
 ]
 
 /**
@@ -33,7 +34,7 @@ export function AppearanceSection(): ReactElement {
         legend="Theme"
         description="System follows your OS appearance. Saved with your settings."
       >
-        <div className="mt-3 grid grid-cols-3 gap-2">
+        <div className="mt-3 grid grid-cols-4 gap-2">
           {THEME_OPTIONS.map(({ value, label, icon: Icon }) => {
             const selected = settings.theme === value
             return (

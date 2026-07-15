@@ -1,0 +1,50 @@
+/* ============================================================
+   ADELINE — the CCC terminal palette as a Reflect theme.
+   Source of truth: creatorcomputecompany.yaml (accent #7aa2f7,
+   background #262A2C, foreground #c8d0d8, "details: darker").
+
+   Applied together with `.dark` (the ThemeProvider adds both
+   classes), so anything not overridden here inherits the stock
+   dark theme rather than falling back to light values.
+   ============================================================ */
+
+.adeline {
+  /* ---- Functional colors, from the terminal ramp ---------- */
+  --red-500:   #f7768e;
+  --green-500: #7bd88f;
+  --amber-500: #e6c384;
+
+  /* ---- Brand: periwinkle replaces indigo ------------------ */
+  /* #7aa2f7 is light enough that dark text wins on it. */
+  --brand:            #7aa2f7;
+  --brand-hover:      #8db4ff;
+  --brand-foreground: #16181c;
+
+  /* ---- Surfaces: warm charcoal, "details: darker" --------- */
+  --surface:         #262a2c; /* editor canvas — the terminal bg */
+  --surface-sunken:  #212527; /* sidebar, rails                  */
+  --surface-app:     #1f2325; /* whole-app background            */
+  --surface-hover:   rgba(200, 208, 216, 0.05);
+  --surface-active:  rgba(122, 162, 247, 0.14);
+  --surface-inverse: #7aa2f7;
+
+  /* ---- Text: the foreground ramp --------------------------- */
+  --text:            #c8d0d8;
+  --text-secondary:  #99a4b0;
+  --text-muted:      #6d7986;
+  --text-on-brand:   #16181c;
+  --text-on-inverse: #16181c;
+
+  /* ---- Chrome ---------------------------------------------- */
+  --border:        rgba(200, 208, 216, 0.08);
+  --border-strong: rgba(200, 208, 216, 0.16);
+  --input-bg:      rgba(200, 208, 216, 0.05);
+
+  --accent:           #7aa2f7;
+  --accent-hover:     #8db4ff;
+  --accent-soft:      rgba(122, 162, 247, 0.16);
+  --accent-soft-text: #adc6fa;
+
+  --focus-ring:  #7aa2f7;
+  --destructive: #f7768e;
+}

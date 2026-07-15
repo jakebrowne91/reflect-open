@@ -18,12 +18,15 @@ function Toaster({
   ...props
 }: ToasterProps): ReactElement {
   const { theme } = useTheme()
+  // Sonner only knows the three stock modes; custom dark variants render as
+  // dark and pick up their palette from the token-driven classes below.
+  const sonnerTheme = theme === 'adeline' ? 'dark' : theme
 
   return (
     <Sonner
       closeButton={closeButton}
       position={position}
-      theme={theme}
+      theme={sonnerTheme}
       className="toaster group"
       toastOptions={{
         ...toastOptions,

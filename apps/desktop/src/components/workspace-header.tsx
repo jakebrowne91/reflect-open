@@ -58,7 +58,7 @@ export function WorkspaceHeader({
           onClick={onToggleTheme}
           className="rounded-md border border-black/10 px-2.5 py-1 text-xs font-medium dark:border-white/10"
         >
-          {resolvedTheme === 'dark' ? 'Light' : 'Dark'} mode
+          {resolvedTheme !== 'light' ? 'Light' : 'Dark'} mode
         </button>
         <Tooltip>
           <TooltipTrigger asChild>

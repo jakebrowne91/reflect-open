@@ -15,7 +15,7 @@ import { useSettings } from '@/providers/settings-provider'
 export type Theme = ThemePreference
 
 /** The concrete theme actually applied to the document. */
-export type ResolvedTheme = 'light' | 'dark'
+export type ResolvedTheme = 'light' | 'dark' | 'adeline'
 
 interface ThemeContextValue {
   theme: Theme
@@ -59,8 +59,11 @@ export function ThemeProvider({ children }: ThemeProviderProps): ReactElement {
 
   useEffect(() => {
     const root = document.documentElement
-    root.classList.toggle('dark', resolvedTheme === 'dark')
-    root.style.colorScheme = resolvedTheme
+    // Adeline is a dark variant: it layers its palette over the `.dark`
+    // scope, so both classes apply together.
+    root.classList.toggle('dark', resolvedTheme !== 'light')
+    root.classList.toggle('adeline', resolvedTheme === 'adeline')
+    root.style.colorScheme = resolvedTheme === 'light' ? 'light' : 'dark'
   }, [resolvedTheme])
 
   const setTheme = useCallback(
