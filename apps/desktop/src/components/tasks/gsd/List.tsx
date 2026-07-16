@@ -86,7 +86,7 @@ export default function List({
         <div className="flex items-center">
           <Tooltip>
             <button
-              className="mx-1 inline-flex h-8 w-8 items-center justify-center rounded-md text-sm font-semibold text-dark-50 hover:bg-light-400 disabled:cursor-not-allowed disabled:opacity-60 dark:hover:bg-dark-200 md:h-fit md:w-auto md:p-1 md:px-1"
+              className="mx-1 inline-flex h-8 w-8 items-center justify-center rounded-md text-sm font-semibold text-dark-50 transition-[background-color,transform] duration-150 ease-out-strong hover:bg-light-400 active:scale-90 disabled:cursor-not-allowed disabled:opacity-60 dark:hover:bg-dark-200 md:h-fit md:w-auto md:p-1 md:px-1"
               onClick={() => onAddCard(list.publicId)}
             >
               <HiOutlinePlusSmall className="h-5 w-5 text-dark-900" aria-hidden="true" />

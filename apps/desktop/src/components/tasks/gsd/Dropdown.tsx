@@ -39,7 +39,7 @@ export default function Dropdown({
         {children}
       </button>
       {open ? (
-        <div className="absolute right-0 z-[100] isolate mt-2 w-56 origin-top-right rounded-md border border-light-200 bg-white p-1 shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none dark:border-dark-400 dark:bg-dark-300">
+        <div className="absolute right-0 z-[100] isolate mt-2 w-56 origin-top-right rounded-md border border-light-200 bg-white p-1 shadow-lg ring-1 ring-black ring-opacity-5 duration-150 animate-in fade-in zoom-in-95 ease-out-strong focus:outline-none dark:border-dark-400 dark:bg-dark-300">
           <div className="flex flex-col">
             {items.map((item) => (
               <button

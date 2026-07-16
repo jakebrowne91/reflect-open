@@ -317,7 +317,7 @@ export function Board({ onOpenCard }: { onOpenCard: (cardPublicId: string) => vo
           <button
             type="button"
             onClick={() => mutations.createList(boardId, 'New list')}
-            className="mr-3 flex h-10 min-w-[18rem] max-w-[18rem] items-center gap-1 rounded-md border border-dashed border-light-500 px-3 text-sm text-light-900 hover:bg-light-200 dark:border-dark-400 dark:text-dark-900 dark:hover:bg-dark-200"
+            className="mr-3 flex h-10 min-w-[18rem] max-w-[18rem] items-center gap-1 rounded-md border border-dashed border-light-500 px-3 text-sm text-light-900 transition-[background-color,transform] duration-150 ease-out-strong hover:bg-light-200 active:scale-[0.99] dark:border-dark-400 dark:text-dark-900 dark:hover:bg-dark-200"
           >
             <HiOutlinePlusSmall className="h-5 w-5" />
             Add list
@@ -403,7 +403,7 @@ function SortableCard({
             e.stopPropagation()
             setMenuOpen((v) => !v)
           }}
-          className="rounded p-0.5 text-light-800 opacity-0 hover:bg-light-200 group-hover:opacity-100 dark:text-dark-800 dark:hover:bg-dark-300"
+          className="rounded p-0.5 text-light-800 opacity-0 transition-opacity duration-150 hover:bg-light-200 group-hover:opacity-100 dark:text-dark-800 dark:hover:bg-dark-300"
         >
           <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
             <path d="M6 10a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM11.5 10a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM17 10a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" />
@@ -420,7 +420,7 @@ function SortableCard({
                 setMenuOpen(false)
               }}
             />
-            <div className="absolute right-0 z-[100] mt-1 w-44 rounded-md border border-light-200 bg-white p-1 shadow-lg dark:border-dark-400 dark:bg-dark-300">
+            <div className="absolute right-0 z-[100] mt-1 w-44 origin-top-right rounded-md border border-light-200 bg-white p-1 shadow-lg duration-150 animate-in fade-in zoom-in-95 ease-out-strong dark:border-dark-400 dark:bg-dark-300">
               <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-light-800 dark:text-dark-800">
                 Priority
               </div>

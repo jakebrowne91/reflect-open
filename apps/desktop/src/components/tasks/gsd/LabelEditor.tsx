@@ -45,9 +45,12 @@ export function LabelEditor({
   const selected = new Set((card?.labels ?? []).map((l) => l.publicId))
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4" role="dialog">
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4 animate-in fade-in duration-150"
+      role="dialog"
+    >
       <button type="button" aria-label="Close" onClick={onClose} className="absolute inset-0" />
-      <div className="relative z-10 w-full max-w-sm rounded-lg border border-light-300 bg-light-50 p-4 shadow-3xl-light dark:border-dark-300 dark:bg-dark-100 dark:shadow-3xl-dark">
+      <div className="relative z-10 w-full max-w-sm rounded-lg border border-light-300 bg-light-50 p-4 shadow-3xl-light duration-200 animate-in fade-in zoom-in-95 ease-out-strong dark:border-dark-300 dark:bg-dark-100 dark:shadow-3xl-dark">
         <h2 className="mb-4 text-lg font-semibold text-light-1000 dark:text-dark-1000">Labels</h2>
         <div className="flex flex-col gap-1">
           {boardLabels.map((label) => (

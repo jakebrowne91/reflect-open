@@ -7,6 +7,13 @@
  * namespace, which generates the matching utilities.
  */
 @theme {
+  /* Strong custom easings (Emil Kowalski's design-eng standards) — the
+     built-in CSS easings are too weak. Used by the ported GSD board's modals,
+     dropdowns, and press feedback so they feel as intentional as the real app. */
+  --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+
   --color-dark-50: oklch(0.34 0 0);
   --color-dark-100: oklch(0.385 0 0);
   --color-dark-200: oklch(0.415 0 0);

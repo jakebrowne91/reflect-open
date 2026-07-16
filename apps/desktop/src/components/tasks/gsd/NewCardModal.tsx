@@ -74,12 +74,15 @@ export function NewCardModal({
   }
 
   const chip =
-    'rounded-md bg-light-200 px-3 py-1.5 text-sm text-light-1000 hover:bg-light-300 dark:bg-dark-200 dark:text-dark-1000 dark:hover:bg-dark-300'
+    'rounded-md bg-light-200 px-3 py-1.5 text-sm text-light-1000 transition-[background-color,transform] duration-150 ease-out-strong hover:bg-light-300 active:scale-[0.97] dark:bg-dark-200 dark:text-dark-1000 dark:hover:bg-dark-300'
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4" role="dialog">
+    <div
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4 animate-in fade-in duration-150"
+      role="dialog"
+    >
       <button type="button" aria-label="Close" onClick={onClose} className="absolute inset-0" />
-      <div className="relative z-10 w-full max-w-xl rounded-xl border border-light-300 bg-light-100 shadow-3xl-light dark:border-dark-300 dark:bg-dark-100 dark:shadow-3xl-dark">
+      <div className="relative z-10 w-full max-w-xl rounded-xl border border-light-300 bg-light-100 shadow-3xl-light duration-200 animate-in fade-in zoom-in-95 ease-out-strong dark:border-dark-300 dark:bg-dark-100 dark:shadow-3xl-dark">
         <div className="flex items-center justify-between border-b border-light-300 px-5 py-3 dark:border-dark-300">
           <h2 className="text-sm font-semibold text-light-1000 dark:text-dark-1000">New card</h2>
           <button type="button" onClick={onClose} aria-label="Close" className="text-light-800 hover:text-light-1000 dark:text-dark-800 dark:hover:text-dark-1000">
@@ -111,10 +114,10 @@ export function NewCardModal({
                 key={p}
                 type="button"
                 onClick={() => setPriority(priority === p ? null : p)}
-                className={`rounded-md px-3 py-1.5 text-sm ${
+                className={`rounded-md px-3 py-1.5 text-sm transition-[background-color,transform] duration-150 ease-out-strong active:scale-[0.97] ${
                   priority === p
                     ? 'bg-light-1000 text-white dark:bg-dark-500'
-                    : 'bg-light-200 text-light-1000 dark:bg-dark-200 dark:text-dark-1000'
+                    : 'bg-light-200 text-light-1000 hover:bg-light-300 dark:bg-dark-200 dark:text-dark-1000 dark:hover:bg-dark-300'
                 }`}
               >
                 {PRIORITY_LABEL[p]}
@@ -218,7 +221,7 @@ export function NewCardModal({
             type="button"
             onClick={submit}
             disabled={!title.trim()}
-            className="rounded-md bg-light-1000 px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-dark-500"
+            className="rounded-md bg-light-1000 px-4 py-1.5 text-sm font-medium text-white transition-transform duration-150 ease-out-strong active:scale-[0.97] disabled:opacity-50 dark:bg-dark-500"
           >
             Create card
           </button>

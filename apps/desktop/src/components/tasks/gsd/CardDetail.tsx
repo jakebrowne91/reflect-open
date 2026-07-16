@@ -50,7 +50,10 @@ export function CardDetail({
   )
 
   return (
-    <div className="absolute inset-0 z-50 flex flex-col bg-light-50 dark:bg-dark-100" role="dialog">
+    <div
+      className="absolute inset-0 z-50 flex flex-col bg-light-50 duration-200 animate-in fade-in slide-in-from-bottom-2 ease-out-strong dark:bg-dark-100"
+      role="dialog"
+    >
       <div className="flex flex-none items-center gap-2 border-b border-light-300 px-5 py-3 text-sm dark:border-dark-300">
         <span className="text-light-800 dark:text-dark-800">{board?.name ?? 'Board'}</span>
         <span className="text-light-600 dark:text-dark-600">›</span>
