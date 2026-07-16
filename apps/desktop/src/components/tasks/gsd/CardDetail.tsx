@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactElement } from 'react'
-import { HiOutlinePaperClip, HiXMark } from 'react-icons/hi2'
+import { HiArrowLeft, HiOutlinePaperClip, HiXMark } from 'react-icons/hi2'
 import { LabelEditor } from './LabelEditor'
 import LabelIcon from './LabelIcon'
 import {
@@ -54,10 +54,30 @@ export function CardDetail({
       className="absolute inset-0 z-50 flex flex-col bg-light-50 duration-200 animate-in fade-in slide-in-from-bottom-2 ease-out-strong dark:bg-dark-100"
       role="dialog"
     >
-      <div className="flex flex-none items-center gap-2 border-b border-light-300 px-5 py-3 text-sm dark:border-dark-300">
-        <span className="text-light-800 dark:text-dark-800">{board?.name ?? 'Board'}</span>
+      <div className="flex flex-none items-center gap-2 border-b border-light-300 px-4 py-3 text-sm dark:border-dark-300">
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Back to board"
+          className="rounded-md p-1 text-light-800 transition-[background-color,transform] duration-150 hover:bg-light-200 active:scale-90 dark:text-dark-800 dark:hover:bg-dark-200"
+        >
+          <HiArrowLeft size={16} />
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-light-800 transition-colors hover:text-light-1000 dark:text-dark-800 dark:hover:text-dark-1000"
+        >
+          {board?.name ?? 'Board'}
+        </button>
         <span className="text-light-600 dark:text-dark-600">›</span>
-        <span className="text-light-800 dark:text-dark-800">{currentList?.name ?? ''}</span>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-light-800 transition-colors hover:text-light-1000 dark:text-dark-800 dark:hover:text-dark-1000"
+        >
+          {currentList?.name ?? ''}
+        </button>
         <span className="text-light-600 dark:text-dark-600">›</span>
         <span className="font-medium text-light-1000 dark:text-dark-1000">
           {card?.cardNumber != null ? `#${card.cardNumber}` : 'Card'}
@@ -66,7 +86,7 @@ export function CardDetail({
           type="button"
           onClick={onClose}
           aria-label="Close"
-          className="ml-auto rounded-md p-1 text-light-800 hover:bg-light-200 dark:text-dark-800 dark:hover:bg-dark-200"
+          className="ml-auto rounded-md p-1 text-light-800 transition-[background-color,transform] duration-150 hover:bg-light-200 active:scale-90 dark:text-dark-800 dark:hover:bg-dark-200"
         >
           <HiXMark size={18} />
         </button>
