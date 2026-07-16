@@ -109,6 +109,8 @@ function CardMain({ card, cardPublicId }: { card: BoardCard; cardPublicId: strin
   const [title, setTitle] = useState(card.title)
   const [description, setDescription] = useState(card.description ?? '')
   const [comment, setComment] = useState('')
+  const [newChecklist, setNewChecklist] = useState('')
+  const [newItem, setNewItem] = useState<Record<string, string>>({})
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
@@ -139,6 +141,63 @@ function CardMain({ card, cardPublicId }: { card: BoardCard; cardPublicId: strin
           </svg>
         </span>
         <HiOutlinePaperClip className="h-4 w-4" />
+      </div>
+
+      <div className="mt-5">
+        {card.checklists.map((checklist) => {
+            const done = checklist.items.filter((it) => it.completed).length
+            return (
+              <div key={checklist.publicId} className="mb-4">
+                <div className="mb-1 flex items-center justify-between text-sm font-medium text-light-1000 dark:text-dark-1000">
+                  <span>{checklist.name}</span>
+                  <span className="text-[11px] text-light-800 dark:text-dark-800">
+                    {done}/{checklist.items.length}
+                  </span>
+                </div>
+                <ul className="ml-1 flex flex-col gap-1">
+                  {checklist.items.map((item) => (
+                    <li key={item.publicId} className="flex items-center gap-2 text-sm text-light-1000 dark:text-dark-1000">
+                      <input
+                        type="checkbox"
+                        checked={item.completed}
+                        onChange={(event) => m.toggleChecklistItem(item.publicId, event.target.checked)}
+                      />
+                      <span className={item.completed ? 'text-light-800 line-through dark:text-dark-800' : ''}>
+                        {item.title}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <input
+                  value={newItem[checklist.publicId] ?? ''}
+                  onChange={(event) =>
+                    setNewItem((prev) => ({ ...prev, [checklist.publicId]: event.target.value }))
+                  }
+                  onKeyDown={(event) => {
+                    const value = (newItem[checklist.publicId] ?? '').trim()
+                    if (event.key === 'Enter' && value) {
+                      m.addChecklistItem(checklist.publicId, value)
+                      setNewItem((prev) => ({ ...prev, [checklist.publicId]: '' }))
+                    }
+                  }}
+                  placeholder="Add item…"
+                  className="ml-1 mt-1 w-full rounded-md border border-light-400 bg-light-50 px-2 py-1 text-sm text-light-1000 outline-none focus:border-light-700 dark:border-dark-400 dark:bg-dark-200 dark:text-dark-1000"
+                />
+              </div>
+            )
+          })}
+          <input
+            value={newChecklist}
+            onChange={(event) => setNewChecklist(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && newChecklist.trim()) {
+                m.addChecklist(newChecklist.trim())
+                setNewChecklist('')
+              }
+            }}
+            placeholder="+ Add checklist"
+            className="w-full rounded-md border border-dashed border-light-400 bg-transparent px-2 py-1 text-sm text-light-800 outline-none focus:border-light-700 dark:border-dark-400 dark:text-dark-800"
+          />
       </div>
 
       <hr className="my-5 border-light-300 dark:border-dark-300" />
