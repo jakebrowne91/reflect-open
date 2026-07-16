@@ -16,6 +16,7 @@ import { HiOutlinePlusSmall } from 'react-icons/hi2'
 import Card, { type CardPriority } from './Card'
 import List from './List'
 import { LabelEditor } from './LabelEditor'
+import { NewCardModal } from './NewCardModal'
 import { useBoard, useBoardId, useBoardMutations, type BoardCard, type BoardList } from './board-api'
 
 const priorityCycle = [null, 'urgent', 'high', 'medium', 'low'] as const
@@ -125,6 +126,7 @@ export function Board({ onOpenCard }: { onOpenCard: (cardPublicId: string) => vo
   )
 
   const [labelCardId, setLabelCardId] = useState<string | null>(null)
+  const [newCardListId, setNewCardListId] = useState<string | null>(null)
 
   // Kan's board keymap, ported verbatim: c new card · arrows navigate · Tab
   // move across lists · Enter open · l labels · p cycle priority · e to Done ·
@@ -147,8 +149,7 @@ export function Board({ onOpenCard }: { onOpenCard: (cardPublicId: string) => vo
 
       if (key === 'c') {
         const firstList = columns[0]
-        if (firstList !== undefined)
-          mutations.createCard({ title: 'New card', listPublicId: firstList.publicId })
+        if (firstList !== undefined) setNewCardListId(firstList.publicId)
         return
       }
       if (arrows.includes(event.key)) {
@@ -285,7 +286,7 @@ export function Board({ onOpenCard }: { onOpenCard: (cardPublicId: string) => vo
               key={list.publicId}
               list={{ publicId: list.publicId, name: list.name }}
               cardCount={list.cards.length}
-              onAddCard={(listId) => mutations.createCard({ title: 'New card', listPublicId: listId })}
+              onAddCard={(listId) => setNewCardListId(listId)}
               onRename={(listId, name) => mutations.updateList(listId, name)}
               onDelete={(listId) => mutations.deleteList(listId)}
             >
@@ -338,6 +339,14 @@ export function Board({ onOpenCard }: { onOpenCard: (cardPublicId: string) => vo
           boardPublicId={boardId}
           boardLabels={board?.labels ?? []}
           onClose={() => setLabelCardId(null)}
+        />
+      ) : null}
+      {newCardListId !== null && boardId !== undefined ? (
+        <NewCardModal
+          lists={columns}
+          defaultListPublicId={newCardListId}
+          boardLabels={board?.labels ?? []}
+          onClose={() => setNewCardListId(null)}
         />
       ) : null}
     </DndContext>

@@ -122,6 +122,28 @@ export function fetchCard(cardPublicId: string): Promise<BoardCard> {
   return boardFetch(`/cards/${cardPublicId}`, cardSchema)
 }
 
+const activitySchema = z.object({
+  publicId: z.string(),
+  type: z.string().optional(),
+  createdAt: z.string().nullable().optional(),
+  user: z.object({ name: z.string().nullable().optional(), email: z.string().optional() }).nullable().optional(),
+})
+export type CardActivity = z.infer<typeof activitySchema>
+
+export function useCardActivities(cardPublicId: string): CardActivity[] {
+  const activitiesSchema = z.union([
+    z.array(activitySchema),
+    z.object({ activities: z.array(activitySchema).default([]) }).transform((v) => v.activities),
+  ])
+  return (
+    useQuery({
+      queryKey: ['gsd', 'card-activity', cardPublicId],
+      queryFn: () => boardFetch(`/cards/${cardPublicId}/activities`, activitiesSchema),
+      staleTime: 0,
+    }).data ?? []
+  )
+}
+
 export function useLabelMutations(): {
   createAndAssignLabel: (input: {
     cardPublicId: string
@@ -238,13 +260,24 @@ function invalidateBoard(queryClient: QueryClient): void {
   void queryClient.invalidateQueries({ queryKey: ['gsd', 'board'] })
 }
 
+export interface NewCardInput {
+  title: string
+  description?: string
+  listPublicId: string
+  priority?: string | null
+  dueDate?: string | null
+  labelPublicIds?: string[]
+  position?: 'start' | 'end'
+}
+
 export function useBoardMutations(): {
-  createCard: (input: { title: string; description?: string; listPublicId: string }) => void
+  createCard: (input: NewCardInput) => void
   updateCard: (
     cardPublicId: string,
     patch: { title?: string; description?: string; priority?: string | null; dueDate?: string | null },
   ) => void
   moveCard: (cardPublicId: string, listPublicId: string, index: number) => void
+  createCardFull: (input: NewCardInput) => void
   deleteCard: (cardPublicId: string) => void
   createList: (boardPublicId: string, name: string) => void
   updateList: (listPublicId: string, name: string) => void
@@ -254,16 +287,18 @@ export function useBoardMutations(): {
   const onSettled = (): void => invalidateBoard(queryClient)
 
   const createCard = useMutation({
-    mutationFn: (input: { title: string; description?: string; listPublicId: string }) =>
+    mutationFn: (input: NewCardInput) =>
       boardFetch('/cards', createdSchema, {
         method: 'POST',
         body: JSON.stringify({
           title: input.title,
           description: input.description ?? '',
           listPublicId: input.listPublicId,
-          labelPublicIds: [],
+          labelPublicIds: input.labelPublicIds ?? [],
           memberPublicIds: [],
-          position: 'end',
+          position: input.position ?? 'end',
+          ...(input.priority != null ? { priority: input.priority } : {}),
+          ...(input.dueDate != null ? { dueDate: input.dueDate } : {}),
         }),
       }),
     onSettled,
@@ -308,6 +343,7 @@ export function useBoardMutations(): {
     updateCard: (cardPublicId, patch) => updateCard.mutate({ cardPublicId, patch }),
     moveCard: (cardPublicId, listPublicId, index) =>
       updateCard.mutate({ cardPublicId, patch: { listPublicId, index } }),
+    createCardFull: (input) => createCard.mutate(input),
     deleteCard: (cardPublicId) => deleteCard.mutate(cardPublicId),
     createList: (boardPublicId, name) => createList.mutate({ boardPublicId, name }),
     updateList: (listPublicId, name) => updateList.mutate({ listPublicId, name }),
